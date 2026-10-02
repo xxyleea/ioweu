@@ -19,9 +19,9 @@ Open <http://127.0.0.1:8000>. The seeded demo accounts all use `demo123`:
 
 The prototype includes the request board, requester-side offers with buffers, provider matching, two-sided value and buffer negotiation, overlapping-range settlement, a three-day negotiation deadline that releases the provider when no agreement is reached, a recent-history estimator endpoint, balance ledger, mutual completion confirmation, transaction history, and local evidence upload plumbing for disputes. The recommendation engine infers effort and complexity from the written task details on the backend, then compares them with recent history. It is deterministic and local so a live demo does not require an external AI key.
 
-When an agreed task is started, its credits move from the requester's available balance into held escrow. They are released to the provider only after both parties confirm completion. The requester must remain above the configurable `-50` credit floor when escrow is created.
+When an agreed task is started, its credits move from the requester's available balance into held escrow. They are released to the provider only after both parties confirm completion. The requester must remain at or above the single `-20` credit minimum when escrow is created.
 
-Users must have an available balance of at least `-20` credits to post a new request. The favicon is served at `/favicon.ico`.
+Users must have an available balance of at least `-20` credits to post a new request or start an agreed task if the escrow deduction would take them below `-20`. The favicon is served at `/favicon.ico`.
 
 ## Seed recommendation history
 

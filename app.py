@@ -18,8 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "ioweu.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
-MIN_BALANCE = -50
-MIN_REQUEST_BALANCE = -20
+MIN_BALANCE = -20
 TASK_CATEGORIES = (
     "errands",
     "childcare",
@@ -349,11 +348,11 @@ def create_request(
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    if user["balance"] < MIN_REQUEST_BALANCE:
+    if user["balance"] < MIN_BALANCE:
         return render(
             request,
             "error.html",
-            message=f"Your available balance is {user['balance']} credits. You must be at or above {MIN_REQUEST_BALANCE} credits to post a new request.",
+            message=f"Your available balance is {user['balance']} credits. You must be at or above {MIN_BALANCE} credits to post a new request.",
         )
     category = category.strip().lower()
     if category not in TASK_CATEGORIES:
