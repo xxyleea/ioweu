@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU request board</title><link rel="stylesheet" href="/static/style.css"></head>
 <body><header><div><strong>IoU</strong><span class="tagline">Neighbourhood mutual credit</span></div><div>{{ user.name }} · <b>{{ user.balance }} available</b>{% if user.held_balance %}<span class="held"> · {{ user.held_balance }} held</span>{% endif %}<form class="inline" method="post" action="/logout"><button class="link-button">Sign out</button></form></div></header>
 <main class="layout"><section><div class="section-heading"><h1>Neighbourhood requests</h1><span class="pill">Needs first</span></div>
-<form class="card create" method="post" action="/requests"><h2>Ask your neighbours</h2><input name="title" placeholder="What do you need?" required><input id="new-category" name="category" placeholder="Category, e.g. errands" required><textarea name="description" placeholder="Add useful details" required></textarea><div class="value-form"><label>Estimated minutes<input id="new-effort" type="number" name="effort_minutes" min="1" value="30" required></label><label>Complexity (1–5)<input id="new-complexity" type="number" name="complexity" min="1" max="5" value="3" required></label></div><div class="ai-suggestion"><b>Suggested offer:</b> <output id="new-recommendation">Enter task details to calculate</output><span id="new-range"></span></div><div class="value-form"><label>Your offer<input id="new-offered-value" type="number" name="offered_value" min="1" placeholder="Credits" required></label><label>Offer buffer ±<input type="number" name="offered_buffer" min="0" value="2" required></label></div><p class="muted">The suggestion uses recent comparable transactions. You can adjust it before posting.</p><button>Post request</button></form>
+<form class="card create" method="post" action="/requests"><h2>Ask your neighbours</h2><input name="title" placeholder="What do you need?" required><input name="category" placeholder="Category, e.g. errands" required><textarea name="description" placeholder="Add useful details" required></textarea><div class="value-form"><label>Your offer<input type="number" name="offered_value" min="1" placeholder="Credits" required></label><label>Offer buffer ±<input type="number" name="offered_buffer" min="0" value="2" required></label></div><p class="muted">IoU analyses the task description, estimates effort and complexity, and uses recent comparable exchanges to recommend a fair credit value.</p><button>Post request</button></form>
 
 <h2 class="section-title">Pinned: your active exchanges</h2>
 {% for item in my_requests + joined_requests %}{% include "request_card.html" %}{% else %}<p class="empty">Requests you create or accept will appear here.</p>{% endfor %}
@@ -12,31 +12,4 @@
 {% for item in community_requests %}{% include "request_card.html" %}{% else %}<p class="empty">There are no open requests from other residents right now.</p>{% endfor %}
 </section>
 <aside><div class="card"><h2>How value works</h2><p>Both sides submit a value and buffer. If the ranges overlap, IoU proposes the middle of the overlap. Otherwise, you have 3 days to compromise before the request is cancelled.</p><a href="/estimate/errands">Try estimator</a></div><div class="card"><h2>Recent history</h2>{% for item in history %}<p><b>{{ item.value }} credits</b> · {{ item.title }}<br><small>provider: {{ item.provider_name }}</small></p>{% else %}<p>No completed exchanges yet.</p>{% endfor %}</div>
-{% if user.is_moderator %}<div class="card"><h2>Moderator queue</h2>{% for dispute in disputes %}<div class="moderator-item"><b>{{ dispute.title }}</b><p>{{ dispute.description }}</p><small>{{ dispute.recommendation }}</small><form method="post" action="/disputes/{{ dispute.id }}/decide"><select name="decision"><option value="uphold">Uphold dispute</option><option value="deny">Deny dispute</option></select><button>Record decision</button></form></div>{% else %}<p>No disputes.</p>{% endfor %}</div>{% endif %}</aside></main><script>
-const category = document.querySelector("#new-category");
-const effort = document.querySelector("#new-effort");
-const complexity = document.querySelector("#new-complexity");
-const recommendation = document.querySelector("#new-recommendation");
-const range = document.querySelector("#new-range");
-const offer = document.querySelector("#new-offered-value");
-let recommendationTimer;
-async function updateRecommendation() {
-  if (!category.value.trim()) {
-    recommendation.textContent = "Enter a category to calculate";
-    range.textContent = "";
-    return;
-  }
-  const query = new URLSearchParams({effort_minutes: effort.value, complexity: complexity.value, quality_score: "3"});
-  const response = await fetch("/estimate/" + encodeURIComponent(category.value.trim()) + "?" + query);
-  if (!response.ok) return;
-  const data = await response.json();
-  recommendation.textContent = data.recommended + " credits";
-  range.textContent = " (" + data.range[0] + "–" + data.range[1] + " suggested range)";
-  if (!offer.value) offer.value = data.recommended;
-}
-function scheduleRecommendation() {
-  clearTimeout(recommendationTimer);
-  recommendationTimer = setTimeout(updateRecommendation, 250);
-}
-[category, effort, complexity].forEach(field => field.addEventListener("input", scheduleRecommendation));
-</script></body></html>
+{% if user.is_moderator %}<div class="card"><h2>Moderator queue</h2>{% for dispute in disputes %}<div class="moderator-item"><b>{{ dispute.title }}</b><p>{{ dispute.description }}</p><small>{{ dispute.recommendation }}</small><form method="post" action="/disputes/{{ dispute.id }}/decide"><select name="decision"><option value="uphold">Uphold dispute</option><option value="deny">Deny dispute</option></select><button>Record decision</button></form></div>{% else %}<p>No disputes.</p>{% endfor %}</div>{% endif %}</aside></main></body></html>

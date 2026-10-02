@@ -200,6 +200,32 @@ def recommendation(
     }
 
 
+def infer_task_attributes(title: str, description: str, category: str) -> tuple[int, int]:
+    """Infer task effort and complexity from the written request for the demo."""
+    text = f"{title} {description} {category}".lower()
+    effort = 30
+    complexity = 3
+    effort_keywords = {
+        "quick": -10, "pickup": 10, "collect": 10, "grocery": 25,
+        "shopping": 30, "clean": 45, "cleaning": 45, "assemble": 45,
+        "repair": 60, "install": 60, "move": 75, "childcare": 60,
+        "supervision": 60, "lesson": 60, "urgent": 15,
+    }
+    complexity_keywords = {
+        "quick": -1, "pickup": -1, "collect": -1, "grocery": 0,
+        "shopping": 0, "clean": 0, "cleaning": 0, "assemble": 1,
+        "repair": 2, "install": 2, "move": 2, "childcare": 1,
+        "supervision": 1, "lesson": 1, "urgent": 1,
+    }
+    for keyword, adjustment in effort_keywords.items():
+        if keyword in text:
+            effort += adjustment
+    for keyword, adjustment in complexity_keywords.items():
+        if keyword in text:
+            complexity += adjustment
+    return max(15, effort), max(1, min(5, complexity))
+
+
 def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context["user"] = current_user(request)
     return templates.TemplateResponse(request=request, name=template, context=context)
@@ -304,14 +330,12 @@ def create_request(
     category: str = Form(...),
     offered_value: int = Form(...),
     offered_buffer: int = Form(...),
-    effort_minutes: int = Form(30),
-    complexity: int = Form(3),
 ):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     offered_value, offered_buffer = max(1, offered_value), max(0, offered_buffer)
-    effort_minutes, complexity = max(1, effort_minutes), max(1, min(5, complexity))
+    effort_minutes, complexity = infer_task_attributes(title, description, category)
     with db() as connection:
         connection.execute(
             """INSERT INTO requests(
