@@ -17,7 +17,7 @@ Open <http://127.0.0.1:8000>. The seeded demo accounts all use `demo123`:
 - `sam@example.com`
 - `moderator@example.com`
 
-The prototype includes the request board, requester-side offers with buffers, provider matching, two-sided value and buffer negotiation, overlapping-range settlement, a three-day negotiation deadline that releases the provider when no agreement is reached, a recent-history estimator endpoint, balance ledger, mutual completion confirmation, transaction history, and local evidence upload plumbing for disputes. The recommendation engine infers effort and complexity from the written task details on the backend, then compares them with recent history. It is deterministic and local so a live demo does not require an external AI key.
+The prototype includes the request board, requester-side offers with buffers, provider matching, two-sided value and buffer negotiation, overlapping-range settlement, visible recommendation guardrails with explicit confirmation for out-of-range offers, provider leave/reopen, side-to-move deadlines, completion timestamps, a strict three-day dispute window, refund negotiation, moderator no/partial/full decisions, automatic refund ledger adjustments, and richer escrow/payment/Kudos/refund history. The recommendation engine infers effort and complexity from the written task details on the backend, then compares them with recent history. It is deterministic and local so a live demo does not require an external AI key.
 
 When an agreed task is started, its credits move from the requester's available balance into held escrow. They are released to the provider only after both parties confirm completion. The requester must remain at or above the single `-20` credit minimum when escrow is created.
 

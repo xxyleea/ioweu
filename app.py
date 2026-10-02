@@ -80,6 +80,7 @@ def init_db() -> None:
                 provider_value INTEGER, provider_buffer INTEGER,
                 agreed_value INTEGER, negotiation_deadline TEXT,
                 effort_minutes INTEGER, complexity INTEGER, quality_score INTEGER,
+                completed_at TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(requester_id) REFERENCES users(id),
                 FOREIGN KEY(provider_id) REFERENCES users(id)
@@ -101,6 +102,16 @@ def init_db() -> None:
                 opened_by INTEGER NOT NULL, description TEXT NOT NULL,
                 evidence_path TEXT, status TEXT NOT NULL DEFAULT 'open',
                 recommendation TEXT, moderator_decision TEXT,
+                requested_refund_amount INTEGER NOT NULL DEFAULT 0,
+                requester_offer INTEGER, provider_offer INTEGER,
+                negotiation_status TEXT NOT NULL DEFAULT 'open',
+                resolved_at TEXT,
+                FOREIGN KEY(request_id) REFERENCES requests(id)
+            );
+            CREATE TABLE IF NOT EXISTS ledger (
+                id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, request_id INTEGER,
+                kind TEXT NOT NULL, amount INTEGER NOT NULL, description TEXT NOT NULL,
+                created_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id),
                 FOREIGN KEY(request_id) REFERENCES requests(id)
             );
             """
@@ -114,6 +125,8 @@ def init_db() -> None:
         for column in ("effort_minutes", "complexity", "quality_score"):
             if column not in columns:
                 connection.execute(f"ALTER TABLE requests ADD COLUMN {column} INTEGER")
+        if "completed_at" not in columns:
+            connection.execute("ALTER TABLE requests ADD COLUMN completed_at TEXT")
         transaction_columns = {row["name"] for row in connection.execute("PRAGMA table_info(transactions)")}
         for column in ("effort_minutes", "complexity", "quality_score"):
             if column not in transaction_columns:
@@ -122,6 +135,16 @@ def init_db() -> None:
             connection.execute("ALTER TABLE transactions ADD COLUMN kudos_given INTEGER NOT NULL DEFAULT 0")
         if "kudos_bonus" not in transaction_columns:
             connection.execute("ALTER TABLE transactions ADD COLUMN kudos_bonus INTEGER NOT NULL DEFAULT 0")
+        dispute_columns = {row["name"] for row in connection.execute("PRAGMA table_info(disputes)")}
+        for column, definition in (
+            ("requested_refund_amount", "INTEGER NOT NULL DEFAULT 0"),
+            ("requester_offer", "INTEGER"),
+            ("provider_offer", "INTEGER"),
+            ("negotiation_status", "TEXT NOT NULL DEFAULT 'open'"),
+            ("resolved_at", "TEXT"),
+        ):
+            if column not in dispute_columns:
+                connection.execute(f"ALTER TABLE disputes ADD COLUMN {column} {definition}")
         legacy_negotiations = connection.execute(
             """SELECT id, created_at FROM requests
                WHERE status='negotiating' AND negotiation_deadline IS NULL"""
@@ -256,6 +279,20 @@ def expire_negotiations(connection: sqlite3.Connection) -> None:
     )
 
 
+def ledger_entry(connection: sqlite3.Connection, user_id: int, request_id: int | None,
+                 kind: str, amount: int, description: str) -> None:
+    connection.execute(
+        "INSERT INTO ledger(user_id,request_id,kind,amount,description,created_at) VALUES (?,?,?,?,?,?)",
+        (user_id, request_id, kind, amount, description, now()),
+    )
+
+
+def outside_range(connection: sqlite3.Connection, item: sqlite3.Row, value: int) -> bool:
+    band = recommendation(connection, item["category"], item["effort_minutes"] or 30,
+                          item["complexity"] or 3, item["quality_score"] or 3)["range"]
+    return value < band[0] or value > band[1]
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -303,6 +340,10 @@ def home(request: Request):
                FROM disputes d JOIN requests r ON r.id=d.request_id
                JOIN users u ON u.id=d.opened_by ORDER BY d.id DESC"""
         ).fetchall()
+        ledger = connection.execute(
+            """SELECT l.*, r.title FROM ledger l LEFT JOIN requests r ON r.id=l.request_id
+               WHERE l.user_id=? ORDER BY l.created_at DESC""", (user["id"],)
+        ).fetchall()
     return render(
         request,
         "index.html",
@@ -310,7 +351,8 @@ def home(request: Request):
         joined_requests=joined_requests,
         community_requests=community_requests,
         history=history,
-        disputes=disputes if user["is_moderator"] else [],
+        disputes=disputes,
+        ledger=ledger,
         recommendations=recommendations,
         task_categories=TASK_CATEGORIES,
     )
@@ -364,6 +406,8 @@ def give_kudos(request: Request, request_id: int):
                 "UPDATE transactions SET kudos_given=1, kudos_bonus=? WHERE id=?",
                 (bonus, item["id"]),
             )
+            ledger_entry(connection, item["provider_id"], request_id, "kudos_bonus", bonus,
+                         f"Kudos bonus for {item['request_id']}")
     return RedirectResponse("/", status_code=303)
 
 
@@ -375,6 +419,7 @@ def create_request(
     category: str = Form(...),
     offered_value: int = Form(...),
     offered_buffer: int = Form(...),
+    confirm_outside_range: str | None = Form(None),
 ):
     user = current_user(request)
     if not user:
@@ -391,6 +436,13 @@ def create_request(
     offered_value, offered_buffer = max(1, offered_value), max(0, offered_buffer)
     effort_minutes, complexity = infer_task_attributes(title, description, category)
     with db() as connection:
+        suggested = recommendation(connection, category, effort_minutes, complexity)
+        if (offered_value < suggested["range"][0] or offered_value > suggested["range"][1]) and confirm_outside_range != "1":
+            return render(request, "error.html", message=(
+                f"Warning: {offered_value} credits is outside the recommended "
+                f"{suggested['range'][0]}–{suggested['range'][1]} range. "
+                "Return to the form, adjust the offer, or tick the confirmation checkbox to proceed."
+            ))
         connection.execute(
             """INSERT INTO requests(
                 title,description,category,requester_id,requester_value,
@@ -422,12 +474,27 @@ def accept_request(request: Request, request_id: int):
     return RedirectResponse("/", status_code=303)
 
 
+@app.post("/requests/{request_id}/decline")
+def decline_request(request: Request, request_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        item = connection.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
+        if item and item["provider_id"] == user["id"] and item["status"] == "negotiating":
+            connection.execute(
+                """UPDATE requests SET status='open', provider_id=NULL, provider_value=NULL,
+                   provider_buffer=NULL, negotiation_deadline=NULL WHERE id=?""", (request_id,))
+    return RedirectResponse("/", status_code=303)
+
+
 @app.post("/requests/{request_id}/value")
 def submit_value(
     request: Request,
     request_id: int,
     value: int = Form(...),
     buffer: int = Form(...),
+    confirm_outside_range: str | None = Form(None),
 ):
     user = current_user(request)
     if not user:
@@ -440,6 +507,11 @@ def submit_value(
             return RedirectResponse("/", status_code=303)
         if user["id"] not in (item["requester_id"], item["provider_id"]) or item["status"] != "negotiating":
             return RedirectResponse("/", status_code=303)
+        if outside_range(connection, item, value) and confirm_outside_range != "1":
+            return render(request, "error.html", message=(
+                "Warning: this value is outside IoU's recommended range. "
+                "Return to the negotiation form and confirm that you want to continue."
+            ))
         field = "requester_value" if item["requester_id"] == user["id"] else "provider_value"
         buffer_field = "requester_buffer" if field == "requester_value" else "provider_buffer"
         connection.execute(
@@ -483,6 +555,8 @@ def start_request(request: Request, request_id: int):
                WHERE id=?""",
             (item["agreed_value"], item["agreed_value"], user["id"]),
         )
+        ledger_entry(connection, user["id"], request_id, "escrow_hold", -item["agreed_value"],
+                     f"Escrow hold for {item['title']}")
         connection.execute(
             "UPDATE requests SET status='in_progress' WHERE id=?",
             (request_id,),
@@ -522,7 +596,13 @@ def complete_request(request: Request, request_id: int):
                     "UPDATE users SET balance=balance+? WHERE id=?",
                     (item["agreed_value"], item["provider_id"]),
                 )
-            connection.execute("UPDATE requests SET status=? WHERE id=?", (status, request_id))
+                ledger_entry(connection, item["provider_id"], request_id, "task_payment",
+                             item["agreed_value"], f"Payment for {item['title']}")
+                completed_at = now()
+            else:
+                completed_at = item["completed_at"]
+            connection.execute("UPDATE requests SET status=?, completed_at=? WHERE id=?",
+                               (status, completed_at, request_id))
     return RedirectResponse("/", status_code=303)
 
 
@@ -531,6 +611,7 @@ async def dispute(
     request: Request,
     request_id: int,
     description: str = Form(...),
+    requested_refund_amount: int = Form(...),
     evidence: UploadFile | None = File(None),
 ):
     user = current_user(request)
@@ -549,13 +630,20 @@ async def dispute(
         path = filename
     with db() as connection:
         item = connection.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
-        if not item or user["id"] not in (item["requester_id"], item["provider_id"]):
+        if not item or user["id"] != item["requester_id"] or item["status"] != "completed":
             return RedirectResponse("/", status_code=303)
+        if not item["completed_at"] or datetime.fromisoformat(item["completed_at"]) + timedelta(days=3) < datetime.now(timezone.utc):
+            return render(request, "error.html", message="The three-day post-completion dispute window has closed.")
+        requested_refund_amount = max(0, min(requested_refund_amount, item["agreed_value"]))
         midpoint, spread = comparable_stats(connection, "general")
         recommendation = f"Review value {item['agreed_value']} credits against a recent-history band of {midpoint - spread}-{midpoint + spread}."
         connection.execute(
-            "INSERT OR REPLACE INTO disputes(request_id,opened_by,description,evidence_path,recommendation) VALUES (?,?,?,?,?)",
-            (request_id, user["id"], description.strip(), path, recommendation),
+            """INSERT OR REPLACE INTO disputes(
+               request_id,opened_by,description,evidence_path,recommendation,
+               requested_refund_amount,requester_offer,negotiation_status)
+               VALUES (?,?,?,?,?,?,?,'open')""",
+            (request_id, user["id"], description.strip(), path, recommendation,
+             requested_refund_amount, requested_refund_amount if user["id"] == item["requester_id"] else None),
         )
     return RedirectResponse("/", status_code=303)
 
@@ -566,7 +654,66 @@ def decide_dispute(request: Request, dispute_id: int, decision: str = Form(...))
     if not user or not user["is_moderator"]:
         return RedirectResponse("/", status_code=303)
     with db() as connection:
-        connection.execute("UPDATE disputes SET status='resolved', moderator_decision=? WHERE id=?", (decision, dispute_id))
+        dispute = connection.execute(
+            "SELECT d.*, r.agreed_value, r.requester_id, r.provider_id FROM disputes d JOIN requests r ON r.id=d.request_id WHERE d.id=?",
+            (dispute_id,)).fetchone()
+        if dispute and dispute["status"] == "open":
+            refund = {"deny": 0, "partial": dispute["requested_refund_amount"] // 2,
+                      "full": dispute["requested_refund_amount"]}.get(decision, 0)
+            connection.execute("UPDATE users SET balance=balance+? WHERE id=?",
+                               (refund, dispute["requester_id"]))
+            if refund:
+                connection.execute("UPDATE users SET balance=balance-? WHERE id=?",
+                                   (refund, dispute["provider_id"]))
+            if refund:
+                ledger_entry(connection, dispute["requester_id"], dispute["request_id"], "refund",
+                             refund, f"Refund ({decision}) for dispute #{dispute_id}")
+            connection.execute(
+                "UPDATE disputes SET status='resolved', moderator_decision=?, negotiation_status='resolved', resolved_at=? WHERE id=?",
+                (decision, now(), dispute_id))
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/disputes/{dispute_id}/offer")
+def dispute_offer(request: Request, dispute_id: int, amount: int = Form(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        d = connection.execute(
+            "SELECT d.*, r.requester_id, r.provider_id FROM disputes d JOIN requests r ON r.id=d.request_id WHERE d.id=?",
+            (dispute_id,)).fetchone()
+        if not d or d["status"] != "open" or user["id"] not in (d["requester_id"], d["provider_id"]):
+            return RedirectResponse("/", status_code=303)
+        amount = max(0, min(amount, d["requested_refund_amount"]))
+        if user["id"] == d["requester_id"]:
+            connection.execute("UPDATE disputes SET requester_offer=? WHERE id=?", (amount, dispute_id))
+        else:
+            connection.execute("UPDATE disputes SET provider_offer=? WHERE id=?", (amount, dispute_id))
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/disputes/{dispute_id}/accept")
+def accept_dispute_offer(request: Request, dispute_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        d = connection.execute(
+            "SELECT d.*, r.requester_id FROM disputes d JOIN requests r ON r.id=d.request_id WHERE d.id=?",
+            (dispute_id,)).fetchone()
+        if not d or user["id"] != d["requester_id"] or d["provider_offer"] is None:
+            return RedirectResponse("/", status_code=303)
+        refund = d["provider_offer"]
+        connection.execute("UPDATE users SET balance=balance+? WHERE id=?", (refund, user["id"]))
+        if refund:
+            connection.execute("UPDATE users SET balance=balance-? WHERE id=?", (refund, d["provider_id"]))
+        if refund:
+            ledger_entry(connection, user["id"], d["request_id"], "refund", refund,
+                         f"Agreed refund for dispute #{dispute_id}")
+        connection.execute(
+            "UPDATE disputes SET status='resolved', negotiation_status='resolved', moderator_decision='agreed', resolved_at=? WHERE id=?",
+            (now(), dispute_id))
     return RedirectResponse("/", status_code=303)
 
 
