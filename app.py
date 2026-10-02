@@ -89,6 +89,8 @@ def init_db() -> None:
                 requester_id INTEGER NOT NULL, provider_id INTEGER NOT NULL,
                 value INTEGER NOT NULL, effort_minutes INTEGER,
                 complexity INTEGER, quality_score INTEGER,
+                kudos_given INTEGER NOT NULL DEFAULT 0,
+                kudos_bonus INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(request_id) REFERENCES requests(id),
                 FOREIGN KEY(requester_id) REFERENCES users(id),
@@ -116,6 +118,10 @@ def init_db() -> None:
         for column in ("effort_minutes", "complexity", "quality_score"):
             if column not in transaction_columns:
                 connection.execute(f"ALTER TABLE transactions ADD COLUMN {column} INTEGER")
+        if "kudos_given" not in transaction_columns:
+            connection.execute("ALTER TABLE transactions ADD COLUMN kudos_given INTEGER NOT NULL DEFAULT 0")
+        if "kudos_bonus" not in transaction_columns:
+            connection.execute("ALTER TABLE transactions ADD COLUMN kudos_bonus INTEGER NOT NULL DEFAULT 0")
         legacy_negotiations = connection.execute(
             """SELECT id, created_at FROM requests
                WHERE status='negotiating' AND negotiation_deadline IS NULL"""
@@ -334,6 +340,31 @@ def login(request: Request, email: str = Form(...), password: str = Form(...)):
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+@app.post("/requests/{request_id}/kudos")
+def give_kudos(request: Request, request_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        item = connection.execute(
+            """SELECT t.* FROM transactions t
+               JOIN requests r ON r.id=t.request_id
+               WHERE t.request_id=? AND t.requester_id=? AND r.status='completed'""",
+            (request_id, user["id"]),
+        ).fetchone()
+        if item and not item["kudos_given"]:
+            bonus = max(1, round(item["value"] * 0.10))
+            connection.execute(
+                "UPDATE users SET balance=balance+? WHERE id=?",
+                (bonus, item["provider_id"]),
+            )
+            connection.execute(
+                "UPDATE transactions SET kudos_given=1, kudos_bonus=? WHERE id=?",
+                (bonus, item["id"]),
+            )
+    return RedirectResponse("/", status_code=303)
 
 
 @app.post("/requests")
