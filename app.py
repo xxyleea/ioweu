@@ -18,6 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "ioweu.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
+MIN_BALANCE = -50
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="IoU")
@@ -60,6 +61,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL,
                 password TEXT NOT NULL, balance INTEGER NOT NULL DEFAULT 0,
+                held_balance INTEGER NOT NULL DEFAULT 0,
                 is_moderator INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS requests (
@@ -94,6 +96,9 @@ def init_db() -> None:
             """
         )
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(requests)")}
+        user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "held_balance" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN held_balance INTEGER NOT NULL DEFAULT 0")
         if "negotiation_deadline" not in columns:
             connection.execute("ALTER TABLE requests ADD COLUMN negotiation_deadline TEXT")
         for column in ("effort_minutes", "complexity", "quality_score"):
@@ -367,7 +372,28 @@ def start_request(request: Request, request_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        connection.execute("UPDATE requests SET status='in_progress' WHERE id=? AND requester_id=?", (request_id, user["id"]))
+        item = connection.execute(
+            "SELECT * FROM requests WHERE id=? AND requester_id=?",
+            (request_id, user["id"]),
+        ).fetchone()
+        if not item or item["status"] != "agreed":
+            return RedirectResponse("/", status_code=303)
+        if user["balance"] - item["agreed_value"] < MIN_BALANCE:
+            return render(
+                request,
+                "error.html",
+                message=f"You need at least {item['agreed_value']} available credits to hold this task and stay above the {MIN_BALANCE} credit limit.",
+            )
+        connection.execute(
+            """UPDATE users
+               SET balance=balance-?, held_balance=held_balance+?
+               WHERE id=?""",
+            (item["agreed_value"], item["agreed_value"], user["id"]),
+        )
+        connection.execute(
+            "UPDATE requests SET status='in_progress' WHERE id=?",
+            (request_id,),
+        )
     return RedirectResponse("/", status_code=303)
 
 
@@ -383,11 +409,26 @@ def complete_request(request: Request, request_id: int):
             if item["status"] in ("provider_confirmed", "requester_confirmed"):
                 status = "completed"
                 connection.execute(
-                    "INSERT OR IGNORE INTO transactions(request_id,requester_id,provider_id,value,created_at) VALUES (?,?,?,?,?)",
-                    (request_id, item["requester_id"], item["provider_id"], item["agreed_value"], now()),
+                    """INSERT OR IGNORE INTO transactions(
+                       request_id,requester_id,provider_id,value,effort_minutes,
+                       complexity,quality_score,created_at
+                    ) VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        request_id, item["requester_id"], item["provider_id"],
+                        item["agreed_value"], item["effort_minutes"],
+                        item["complexity"], item["quality_score"], now(),
+                    ),
                 )
-                connection.execute("UPDATE users SET balance=balance-? WHERE id=?", (item["agreed_value"], item["requester_id"]))
-                connection.execute("UPDATE users SET balance=balance+? WHERE id=?", (item["agreed_value"], item["provider_id"]))
+                connection.execute(
+                    """UPDATE users
+                       SET held_balance=held_balance-?
+                       WHERE id=? AND held_balance>=?""",
+                    (item["agreed_value"], item["requester_id"], item["agreed_value"]),
+                )
+                connection.execute(
+                    "UPDATE users SET balance=balance+? WHERE id=?",
+                    (item["agreed_value"], item["provider_id"]),
+                )
             connection.execute("UPDATE requests SET status=? WHERE id=?", (status, request_id))
     return RedirectResponse("/", status_code=303)
 
