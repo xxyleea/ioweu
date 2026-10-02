@@ -19,6 +19,14 @@ BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "ioweu.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
 MIN_BALANCE = -50
+TASK_CATEGORIES = (
+    "errands",
+    "childcare",
+    "tech help",
+    "home",
+    "pet care",
+    "tutoring",
+)
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="IoU")
@@ -298,6 +306,7 @@ def home(request: Request):
         history=history,
         disputes=disputes if user["is_moderator"] else [],
         recommendations=recommendations,
+        task_categories=TASK_CATEGORIES,
     )
 
 
@@ -334,6 +343,9 @@ def create_request(
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    category = category.strip().lower()
+    if category not in TASK_CATEGORIES:
+        return render(request, "error.html", message="Please choose a valid task category.")
     offered_value, offered_buffer = max(1, offered_value), max(0, offered_buffer)
     effort_minutes, complexity = infer_task_attributes(title, description, category)
     with db() as connection:
