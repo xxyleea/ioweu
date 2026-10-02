@@ -233,6 +233,16 @@ def home(request: Request):
                FROM requests r JOIN users u ON u.id=r.requester_id
                LEFT JOIN users p ON p.id=r.provider_id ORDER BY r.created_at DESC"""
         ).fetchall()
+        recommendations = {
+            item["id"]: recommendation(
+                connection,
+                item["category"],
+                item["effort_minutes"] or 30,
+                item["complexity"] or 3,
+                item["quality_score"] or 3,
+            )
+            for item in requests
+        }
         my_requests = [item for item in requests if item["requester_id"] == user["id"]]
         joined_requests = [
             item for item in requests
@@ -261,6 +271,7 @@ def home(request: Request):
         community_requests=community_requests,
         history=history,
         disputes=disputes if user["is_moderator"] else [],
+        recommendations=recommendations,
     )
 
 
@@ -293,20 +304,24 @@ def create_request(
     category: str = Form(...),
     offered_value: int = Form(...),
     offered_buffer: int = Form(...),
+    effort_minutes: int = Form(30),
+    complexity: int = Form(3),
 ):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     offered_value, offered_buffer = max(1, offered_value), max(0, offered_buffer)
+    effort_minutes, complexity = max(1, effort_minutes), max(1, min(5, complexity))
     with db() as connection:
         connection.execute(
             """INSERT INTO requests(
                 title,description,category,requester_id,requester_value,
-                requester_buffer,created_at
-            ) VALUES (?,?,?,?,?,?,?)""",
+                requester_buffer,effort_minutes,complexity,created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 title.strip(), description.strip(), category.strip().lower(),
-                user["id"], offered_value, offered_buffer, now(),
+                user["id"], offered_value, offered_buffer, effort_minutes,
+                complexity, now(),
             ),
         )
     return RedirectResponse("/", status_code=303)
