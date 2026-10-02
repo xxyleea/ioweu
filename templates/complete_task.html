@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}IoU · Mark as complete{% endblock %}
+{% block content %}
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
+  <h1 style="margin-top:.8rem">Mark as Complete</h1>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits in escrow</p>
+</div></header>
+
+<form class="card form-card" method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete">
+  <label>Completion note (optional)
+    <textarea name="note" rows="4" placeholder="What did you do? Anything the owner should know?"></textarea>
+  </label>
+  <label>Upload evidence (optional, up to 3 files)
+    <input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" multiple id="evidence-input">
+  </label>
+  <ul class="evidence-preview" id="evidence-preview"></ul>
+  <label class="check-row"><input type="checkbox" name="confirm_done" value="1" required>
+    I confirm this task has been completed.</label>
+  <div class="modal-actions">
+    <a class="btn-ghost" href="/requests/{{ item.id }}">Back</a>
+    <button class="btn-primary">Submit Completion</button>
+  </div>
+</form>
+
+<script>
+const input = document.getElementById('evidence-input');
+const preview = document.getElementById('evidence-preview');
+input.addEventListener('change', () => {
+  preview.innerHTML = '';
+  [...input.files].slice(0, 3).forEach(f => {
+    const li = document.createElement('li');
+    li.textContent = f.name;
+    preview.appendChild(li);
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,63 @@
+  {% for m in messages %}
+    {% if m.kind == 'system' %}
+      <p class="chat-system">{{ m.body }}</p>
+    {% elif m.kind == 'offer' %}
+      {% set meta = m.meta | from_json %}
+      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-bubble special-bubble offer-bubble state-{{ m.status or 'done' }}">
+          <small>{{ m.sender_name }}</small>
+          <b>💰 {{ meta.amount }} credits</b>
+          {% if m.status == 'pending' %}
+            {% if m.sender_id != user.id %}
+            <div class="bubble-actions">
+              <form method="post" action="/offers/{{ m.id }}/accept"><button class="btn-small btn-primary">Accept</button></form>
+              <button class="btn-small btn-ghost" data-counter-offer="{{ m.id }}">Counter</button>
+              <form method="post" action="/offers/{{ m.id }}/decline"><button class="btn-small btn-ghost danger">Decline</button></form>
+            </div>
+            {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
+          {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
+        </div>
+      </div>
+    {% elif m.kind == 'meetup' %}
+      {% set meta = m.meta | from_json %}
+      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-bubble special-bubble meetup-bubble state-{{ m.status or 'done' }}">
+          <small>{{ m.sender_name }}</small>
+          <b>📅 {{ meta.date }} at {{ meta.time }}</b>
+          <p>📍 {{ meta.location }}</p>
+          {% if m.status == 'pending' %}
+            {% if m.sender_id != user.id %}
+            <div class="bubble-actions">
+              <form method="post" action="/meetups/{{ m.id }}/accept"><button class="btn-small btn-primary">Accept meeting</button></form>
+              <form method="post" action="/meetups/{{ m.id }}/decline"><button class="btn-small btn-ghost danger">Decline</button></form>
+            </div>
+            {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
+          {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
+        </div>
+      </div>
+    {% elif m.kind == 'settlement' %}
+      {% set meta = m.meta | from_json %}
+      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-bubble special-bubble settlement-bubble state-{{ m.status or 'done' }}">
+          <small>{{ m.sender_name }}</small>
+          <b>⚖️ Refund {{ meta.amount }} credits</b>
+          {% if meta.reason %}<p>{{ meta.reason }}</p>{% endif %}
+          {% if m.status == 'pending' %}
+            {% if m.sender_id != user.id %}
+            <div class="bubble-actions">
+              <form method="post" action="/settlements/{{ m.id }}/accept"><button class="btn-small btn-primary">Accept</button></form>
+              <button class="btn-small btn-ghost" data-counter-settlement="{{ m.id }}">Counter</button>
+              <form method="post" action="/settlements/{{ m.id }}/decline"><button class="btn-small btn-ghost danger">Decline</button></form>
+            </div>
+            {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
+          {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
+        </div>
+      </div>
+    {% else %}
+      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-bubble"><small>{{ m.sender_name }}</small>{{ m.body }}</div>
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="empty">No messages yet — say hi and arrange the details.</p>
+  {% endfor %}

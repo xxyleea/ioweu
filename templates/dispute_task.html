@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}IoU · Raise dispute{% endblock %}
+{% block content %}
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/requests/{{ item.id }}/review">← Back</a>
+  <h1 style="margin-top:.8rem">Raise Dispute</h1>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits will be frozen</p>
+</div></header>
+
+<form class="card form-card" method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/dispute">
+  <label>Reason
+    <select name="reason" required>
+      <option value="not_completed">Task not completed</option>
+      <option value="quality">Quality does not match the agreement</option>
+      <option value="no_show">Helper did not show up</option>
+      <option value="communication">Communication issue</option>
+      <option value="other">Other</option>
+    </select>
+  </label>
+  <label>What happened?
+    <textarea name="description" rows="5" required placeholder="Describe the problem so the other side (and a moderator, if needed) understands."></textarea>
+  </label>
+  <label>Desired outcome
+    <select name="desired_outcome" id="outcome-select" required>
+      <option value="partial">Partial refund</option>
+      <option value="full">Full refund ({{ item.agreed_value }} credits)</option>
+      <option value="redo">Redo the task</option>
+      <option value="other">Other</option>
+    </select>
+  </label>
+  <label id="refund-row">Refund amount (credits)
+    <input type="number" name="refund_amount" min="0" max="{{ item.agreed_value }}" value="0">
+  </label>
+  <label>Upload evidence (required)
+    <input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" required>
+  </label>
+  <div class="modal-actions">
+    <a class="btn-ghost" href="/requests/{{ item.id }}/review">Back</a>
+    <button class="btn-primary danger-solid">Submit Dispute — freeze {{ item.agreed_value }} credits</button>
+  </div>
+</form>
+
+<script>
+const sel = document.getElementById('outcome-select');
+const row = document.getElementById('refund-row');
+sel.addEventListener('change', () => { row.style.display = sel.value === 'partial' ? '' : 'none'; });
+row.style.display = '';
+</script>
+{% endblock %}

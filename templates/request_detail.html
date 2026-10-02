@@ -6,28 +6,180 @@
   <div>
     <a class="btn-ghost btn-back" href="javascript:history.back()">← Back</a>
     <h1 style="margin-top:.8rem">{{ genre_emoji[item.category] if item.category in genre_emoji }} {{ item.title }}</h1>
-    <p class="muted">{{ item.category }} · requested by {{ item.requester_name }}{% if item.location %} · 📍 {{ item.location }}{% endif %}{% if item.needed_by %} · ⏰ needed by {{ item.needed_by }}{% endif %}</p>
+    <p class="muted">{{ item.category }} · requested by {{ item.requester_name }}{% if item.provider_name %} · helper {{ item.provider_name }}{% endif %}{% if item.location %} · 📍 {{ item.location }}{% endif %}{% if item.preferred_time %} · 🕒 meetup {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %} · ⏰ needed by {{ item.needed_by }}{% endif %}</p>
   </div>
-  {% if message_count and (item.requester_id == user.id or item.provider_id == user.id) %}
-  <a class="btn-primary" href="/chat/{{ item.id }}">💬 Messages ({{ message_count }})</a>
+  {% if involved and message_count %}
+  <a class="btn-ghost" href="/chat/{{ item.id }}">💬 Messages ({{ message_count }})</a>
   {% endif %}
 </header>
 
+<section class="card hero-card s-{{ item.status }}">
+  <div class="hero-top">
+    <span class="status s-{{ item.status }} big">{{ status_label }}</span>
+    {% if hero.actor == 'you' %}<span class="hero-actor you">Your move</span>
+    {% elif hero.actor == 'other' %}<span class="hero-actor">Waiting for the other side</span>{% endif %}
+  </div>
+  <p class="hero-label">{{ hero.label }}</p>
+  {% if item.agreed_value and item.status not in ('open','negotiating') %}
+  <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits agreed
+    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held in escrow{% endif %}
+    {% if item.status in ('completed','resolved') %}· released{% endif %}
+  </p>
+  {% endif %}
+  {% if item.status == 'scheduled' %}
+  <p class="hero-meetup">📅 {{ item.meetup_date }} at {{ item.meetup_time }} · 📍 {{ item.meetup_location }}</p>
+  {% endif %}
+  <div class="hero-actions">
+    {% if hero.action %}
+      {% if hero.action.modal %}
+      <button class="btn-primary" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
+      {% else %}
+      <a class="btn-primary" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
+      {% endif %}
+    {% endif %}
+    {% if item.status == 'open' and is_owner %}
+    <a class="btn-ghost" href="/my-posts">Edit from My Posts</a>
+    <form method="post" action="/requests/{{ item.id }}/cancel" onsubmit="return confirm('Cancel this request? This cannot be undone.')"><button class="btn-ghost danger">Cancel request</button></form>
+    {% endif %}
+    {% if item.status == 'disputed' and involved %}
+    <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU to mediate</a>
+    {% endif %}
+    {% if item.status in ('completed','resolved') and is_owner %}
+      {% set transaction = history | selectattr('request_id', 'equalto', item.id) | first %}
+      {% if transaction and transaction.kudos_given %}
+      <span class="kudos-done">Kudos sent (+{{ transaction.kudos_bonus }} bonus)</span>
+      {% else %}
+      <form method="post" action="/requests/{{ item.id }}/kudos"><button class="kudos-button">Give Kudos (+10%)</button></form>
+      {% endif %}
+    {% endif %}
+    {% if item.status in ('completed','resolved') and involved %}
+    <details class="after-dispute"><summary>Report a problem</summary>
+      <p class="muted">Disputes after completion go straight to a community moderator.</p>
+      <form method="post" action="/requests/{{ item.id }}/dispute-after"><button class="btn-ghost danger">Open after-completion dispute</button></form>
+    </details>
+    {% endif %}
+  </div>
+</section>
+
+{% if item.status != 'open' %}
+<section class="card timeline-card">
+  <h2>Progress</h2>
+  <ol class="timeline">
+    {% for step in timeline_steps %}
+    <li class="{% if loop.index0 < step_index %}done{% elif loop.index0 == step_index %}current{% endif %}">
+      <span class="tl-dot"></span><span class="tl-label">{{ step }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if item.status in ('disputed','human_review') %}
+  <p class="muted tl-note">⚖️ Settlement in progress — the timeline resumes once the dispute is resolved.</p>
+  {% endif %}
+</section>
+{% endif %}
+
 <div class="detail-layout">
-  <div>
-    {% include "request_card.html" %}
+  <div class="card">
+    <h2>Request details</h2>
+    <p>{{ item.description }}</p>
+    <p class="offer"><b>Requester offer</b><span class="offer-num">{{ item.requester_value }} <small>± {{ item.requester_buffer }}</small></span> credits</p>
+    <p class="ai-suggestion"><b>IoU recommendation</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span>({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
+    {% if item.completion_note %}
+    <h3>Completion note</h3>
+    <p>{{ item.completion_note }}</p>
+    {% endif %}
   </div>
   <aside class="card how-card detail-side">
     <h2>How this exchange works</h2>
     <ol class="steps-list">
-      <li><b>Offer to help</b> — the requester is notified in your shared thread.</li>
-      <li><b>Negotiate</b> — both sides propose a value ± buffer; IoU suggests a fair compromise after each round.</li>
-      <li><b>Escrow</b> — credits are held while the task runs.</li>
-      <li><b>Confirm together</b> — credits move only when both sides confirm.</li>
+      <li><b>Offer to help</b> — agree a fair value together in chat.</li>
+      <li><b>Confirm exchange</b> — both sides confirm, credits go into escrow.</li>
+      <li><b>Meet &amp; do the task</b> — schedule a time and place.</li>
+      <li><b>Review &amp; release</b> — the owner confirms completion and escrow is released.</li>
     </ol>
-    {% if item.requester_id == user.id or item.provider_id == user.id %}
-    <a class="btn-ghost" href="/chat/{{ item.id }}">Open your chat thread →</a>
-    {% endif %}
+    {% if involved %}<a class="btn-ghost" href="/chat/{{ item.id }}">Open your chat thread →</a>{% endif %}
   </aside>
 </div>
+
+{% if item.status == 'open' and not is_owner %}
+<div class="modal" id="offer-modal" hidden>
+  <div class="modal-card">
+    <h2>Offer to help</h2>
+    <p class="muted">The requester is offering <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits. Accept it, or propose your own value.</p>
+    <p class="ai-suggestion"><b>✨ IoU suggested</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span class="muted">({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
+    <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
+      <input type="hidden" name="next" value="/requests/{{ item.id }}">
+      <input type="hidden" name="confirm_outside_range" value="1">
+      <div class="offer-options">
+        <label class="offer-option selected">
+          <input type="radio" name="mode" value="accept" checked>
+          <span class="opt-title">Accept offer</span>
+          <span class="opt-value">{{ item.requester_value }} <small>credits</small></span>
+        </label>
+        <label class="offer-option">
+          <input type="radio" name="mode" value="custom">
+          <span class="opt-title">Make an offer</span>
+          <input class="opt-input" type="number" name="amount" min="1" value="{{ recommendations[item.id].recommended }}">
+        </label>
+      </div>
+      <p class="range-warning" hidden>⚠️ This is outside the requester's preferred range ({{ item.requester_value - item.requester_buffer }}–{{ item.requester_value + item.requester_buffer }}). You can still send it — they can accept or counter.</p>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send offer</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status == 'agreement_pending' and involved and not my_confirm %}
+<div class="modal" id="confirm-exchange-modal" hidden>
+  <div class="modal-card">
+    <h2>Confirm Exchange</h2>
+    <p>The agreed value is <b>{{ item.agreed_value }} credits</b>. Once both sides confirm, {{ item.agreed_value }} credits move from the requester's balance into escrow.</p>
+    <p class="muted">Escrowed credits are released to the helper only after the task is completed and confirmed.</p>
+    <form method="post" action="/requests/{{ item.id }}/confirm-exchange" class="modal-actions">
+      <button type="button" class="btn-ghost" data-modal-close>Back</button>
+      <button class="btn-primary">Confirm Exchange</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status == 'scheduled' and involved %}
+<div class="modal" id="start-task-modal" hidden>
+  <div class="modal-card">
+    <h2>Start Task</h2>
+    <p>Meeting confirmed for <b>{{ item.meetup_date }} at {{ item.meetup_time }}</b>. Start the task when you're ready.</p>
+    <form method="post" action="/requests/{{ item.id }}/start" class="modal-actions">
+      <button type="button" class="btn-ghost" data-modal-close>Back</button>
+      <button class="btn-primary">Start Task</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<script>
+document.querySelectorAll('[data-modal-open]').forEach(b => b.addEventListener('click', () => {
+  document.getElementById(b.dataset.modalOpen).hidden = false;
+}));
+document.querySelectorAll('[data-modal-close]').forEach(b => b.addEventListener('click', () => {
+  b.closest('.modal').hidden = true;
+}));
+const modeRadios = document.querySelectorAll('input[name="mode"]');
+function syncOptions() {
+  document.querySelectorAll('.offer-option').forEach(o => {
+    o.classList.toggle('selected', o.querySelector('input[name="mode"]').checked);
+  });
+}
+modeRadios.forEach(r => r.addEventListener('change', syncOptions));
+const amountInput = document.querySelector('.opt-input');
+if (amountInput) {
+  amountInput.addEventListener('focus', () => {
+    const custom = document.querySelector('input[name="mode"][value="custom"]');
+    if (custom) { custom.checked = true; syncOptions(); }
+  });
+  amountInput.addEventListener('input', () => {
+    const lo = {{ item.requester_value - item.requester_buffer }}, hi = {{ item.requester_value + item.requester_buffer }};
+    const v = parseInt(amountInput.value || '0', 10);
+    document.querySelector('.range-warning').hidden = v >= lo && v <= hi;
+  });
+}
+</script>
 {% endblock %}

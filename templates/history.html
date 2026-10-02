@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}IoU · Credit history{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <a class="btn-ghost btn-back" href="/">← Home</a>
+    <h1 style="margin-top:.8rem">Credit history</h1>
+    <p class="muted">Every credit movement on your account.</p>
+  </div>
+  <a class="btn-ghost" href="/account">Account →</a>
+</header>
+
+<div class="card">
+  <ul class="ledger-list">
+  {% for item in ledger %}
+    <li><span class="ledger-amount {% if item.amount > 0 %}pos{% else %}neg{% endif %}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</span><div><b>{{ item.kind.replace('_',' ') }}</b>{% if item.title %} · {{ item.title }}{% endif %}<br><small>{{ item.description }} · {{ item.created_at[:16]|replace('T',' ') }}</small></div></li>
+  {% else %}<li class="empty">No credit activity yet.</li>{% endfor %}
+  </ul>
+</div>
+{% endblock %}

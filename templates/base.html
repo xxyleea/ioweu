@@ -9,7 +9,7 @@
     <a class="nav-link {% if page == 'posts' %}active{% endif %}" href="/my-posts"><span class="nav-ico">✎</span>Get help</a>
     <a class="nav-link {% if page == 'helping' %}active{% endif %}" href="/helping"><span class="nav-ico">♥</span>Help others</a>
     <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Community</a>
-    <a class="nav-link {% if page == 'messages' %}active{% endif %}" href="/messages"><span class="nav-ico">✉</span>Messages</a>
+    <a class="nav-link {% if page == 'messages' %}active{% endif %}" href="/messages"><span class="nav-ico">✉</span>Messages{% if unread_msgs %}<span class="unread-dot"></span>{% endif %}</a>
     <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help"><span class="nav-ico">?</span>Help</a>
     <a class="nav-link {% if page == 'account' %}active{% endif %}" href="/account"><span class="nav-ico">☺</span>Account</a>
   </div>

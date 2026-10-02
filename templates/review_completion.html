@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}IoU · Review completion{% endblock %}
+{% block content %}
+<div class="stack">
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
+  <h1 style="margin-top:.8rem">Review Completion</h1>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits in escrow</p>
+</div></header>
+
+<section class="card">
+  <h2>Completion note</h2>
+  <p>{{ item.completion_note or 'The helper did not leave a note.' }}</p>
+  {% set evidence = item.completion_evidence | from_json %}
+  {% if evidence %}
+  <h3>Evidence</h3>
+  <ul class="evidence-list">
+    {% for path in evidence %}
+    <li><a href="/static/uploads/{{ path }}" target="_blank">📎 Evidence {{ loop.index }}</a></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Your decision</h2>
+  <p class="muted">Confirming releases <b>{{ item.agreed_value }} credits</b> from escrow to {{ item.provider_name }}.</p>
+  <div class="modal-actions">
+    <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise Dispute</a>
+    <form method="post" action="/requests/{{ item.id }}/review/confirm">
+      <button class="btn-primary">Confirm Completion — release {{ item.agreed_value }} credits</button>
+    </form>
+  </div>
+</section>
+</div>
+{% endblock %}

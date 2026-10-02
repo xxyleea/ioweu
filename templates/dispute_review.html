@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}IoU · Moderator review{% endblock %}
+{% block content %}
+<div class="stack">
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/">← Back</a>
+  <h1 style="margin-top:.8rem">Dispute Review</h1>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits frozen</p>
+</div></header>
+
+<section class="card">
+  <h2>Dispute details</h2>
+  <p><b>Reason:</b> {{ dispute.reason or '—' }} · <b>Desired outcome:</b> {{ dispute.desired_outcome or '—' }}</p>
+  <p>{{ dispute.description }}</p>
+  {% if dispute.evidence_path %}<p><a href="/static/uploads/{{ dispute.evidence_path }}" target="_blank">📎 View evidence</a></p>{% endif %}
+  <p class="muted">Requested refund: {{ dispute.requested_refund_amount }} · Requester: {{ item.requester_name }} · Helper: {{ item.provider_name }}</p>
+</section>
+
+<section class="card">
+  <h2>Chat history</h2>
+  <div class="chat-thread readonly">
+    {% for message in messages %}
+      {% if message.kind == 'text' %}
+      <div class="bubble-row"><div class="bubble"><small class="bubble-name">{{ message.sender_name }}</small><p>{{ message.body }}</p></div></div>
+      {% else %}
+      <p class="chat-system">{{ message.body }}</p>
+      {% endif %}
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <h2>⚖️ Suggested Resolution</h2>
+  <p>Refund <b>{{ suggestion.amount }}</b> credits to the requester; helper keeps {{ item.agreed_value - suggestion.amount }}.</p>
+  <p class="muted">{{ suggestion.reason }}</p>
+</section>
+
+{% if dispute.status == 'open' %}
+<section class="card">
+  <h2>Final decision</h2>
+  <div class="modal-actions">
+    <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="deny"><button class="btn-ghost">No refund — helper keeps all</button></form>
+    <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="partial"><button class="btn-primary">Partial refund ({{ dispute.requested_refund_amount // 2 }} credits)</button></form>
+    <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="full"><button class="btn-ghost danger">Full refund ({{ item.agreed_value }} credits)</button></form>
+  </div>
+</section>
+{% else %}
+<p class="success card">This dispute was resolved ({{ dispute.moderator_decision }}).</p>
+{% endif %}
+</div>
+{% endblock %}

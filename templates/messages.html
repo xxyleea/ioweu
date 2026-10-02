@@ -13,7 +13,7 @@
   <a class="card thread-card" href="/chat/{{ t.id }}">
     <div class="avatar">{{ (t.provider_name or t.requester_name)[0] }}</div>
     <div class="thread-meta">
-      <b>{{ t.title }}</b>
+      <b>{{ t.title }}{% if t.unread_count %}<span class="thread-unread">● {{ t.unread_count }}</span>{% endif %}</b>
       <small class="muted">{{ t.requester_name }}{% if t.provider_name %} · {{ t.provider_name }}{% endif %}</small>
       <p class="thread-preview">{{ t.last_body }}</p>
     </div>

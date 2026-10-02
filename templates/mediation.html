@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}IoU · Mediation{% endblock %}
+{% block content %}
+<div class="stack">
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
+  <h1 style="margin-top:.8rem">Dispute Resolution</h1>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits frozen</p>
+</div></header>
+
+<section class="card">
+  <h2>The dispute</h2>
+  <p><b>Reason:</b> {{ dispute.reason or '—' }}</p>
+  <p>{{ dispute.description }}</p>
+  {% if dispute.evidence_path %}<p><a href="/static/uploads/{{ dispute.evidence_path }}" target="_blank">📎 View evidence</a></p>{% endif %}
+  <p class="muted">Requested refund: {{ dispute.requested_refund_amount }} credits</p>
+</section>
+
+<section class="card mediation-suggestion">
+  <h2>⚖️ Suggested Resolution</h2>
+  <p class="suggestion-amount">Refund <b>{{ suggestion.amount }}</b> of {{ item.agreed_value }} credits to the requester; the helper keeps {{ item.agreed_value - suggestion.amount }}.</p>
+  <p class="muted">{{ suggestion.reason }}</p>
+  {% if my_accept %}
+  <p class="success">You accepted this suggestion. Waiting for the other participant.</p>
+  {% else %}
+  <div class="modal-actions">
+    <form method="post" action="/requests/{{ item.id }}/mediation/reject" onsubmit="return confirm('Reject the suggestion? The dispute goes to a community moderator.')">
+      <button class="btn-ghost danger">Reject</button>
+    </form>
+    <form method="post" action="/requests/{{ item.id }}/mediation/accept">
+      <button class="btn-primary">Accept Suggestion</button>
+    </form>
+  </div>
+  {% endif %}
+  <p class="muted small">Both participants must accept for the resolution to take effect. If either rejects, a community moderator reviews the case.</p>
+</section>
+
+<section class="card">
+  <h2>Chat history</h2>
+  <div class="chat-thread readonly">
+    {% for message in messages %}
+      {% if message.kind == 'text' %}
+      <div class="bubble-row {{ 'mine' if message.sender_id == user.id }}"><div class="bubble"><small class="bubble-name">{{ message.sender_name }}</small><p>{{ message.body }}</p></div></div>
+      {% else %}
+      <p class="chat-system">{{ message.body }}</p>
+      {% endif %}
+    {% endfor %}
+  </div>
+</section>
+</div>
+{% endblock %}

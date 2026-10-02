@@ -4,38 +4,171 @@
 <header class="page-head">
   <div>
     <a class="btn-ghost btn-back" href="/messages">← Messages</a>
-    <h1 style="margin-top:.8rem">{{ item.title }}</h1>
-    <p class="muted">{{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %} · <span class="status s-{{ item.status }}">{{ item.status.replace('_',' ') }}</span></p>
+    <h1 style="margin-top:.8rem">Chat</h1>
   </div>
-  <a class="btn-ghost" href="/requests/{{ item.id }}">View task →</a>
 </header>
 
+<a class="chat-task-card" href="/requests/{{ item.id }}">
+  <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
+  <span class="tt-body">
+    <span class="tt-title">{{ item.title }}</span>
+    <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %} · {{ hero.label }}</span>
+  </span>
+  <span class="tt-arrow">→</span>
+</a>
+
 <div class="card chat-card" id="chat-box">
-  {% for m in messages %}
-    {% if m.kind == 'system' %}
-      <p class="chat-system">{{ m.body }}</p>
-    {% elif m.kind == 'offer' %}
-      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
-        <div class="chat-bubble offer-bubble"><small>{{ m.sender_name }}</small><b>{{ m.body }}</b></div>
-      </div>
-    {% else %}
-      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
-        <div class="chat-bubble"><small>{{ m.sender_name }}</small>{{ m.body }}</div>
-      </div>
-    {% endif %}
+  {% include "_chat_messages.html" %}
+</div>
+
+{% if item.status == 'agreement_pending' %}
+  {% if my_confirm %}
+  <div class="chat-action-card waiting">
+    <p>✅ You confirmed the exchange. Waiting for the other participant to confirm.</p>
+  </div>
   {% else %}
-    <p class="empty">No messages yet — say hi and arrange the details.</p>
-  {% endfor %}
+  <div class="chat-action-card">
+    <div>
+      <b>Confirm Exchange — {{ item.agreed_value }} credits</b>
+      <p class="muted">Once both sides confirm, {{ item.agreed_value }} credits move from the requester's balance into escrow and are released when the task is completed.</p>
+    </div>
+    <form method="post" action="/requests/{{ item.id }}/confirm-exchange">
+      <button class="btn-primary">Confirm Exchange</button>
+    </form>
+  </div>
+  {% endif %}
+{% endif %}
+
+<div class="chat-toolbar">
+  {% if item.status in ('negotiating','agreement_pending') %}
+  <button class="btn-ghost" data-modal-open="offer-modal">💰 Make an offer</button>
+  {% endif %}
+  {% if item.status in ('confirmed','scheduled') %}
+  <button class="btn-ghost" data-modal-open="meetup-modal">📅 Propose meeting</button>
+  {% endif %}
+  {% if item.status == 'disputed' %}
+  <button class="btn-ghost" data-modal-open="settlement-modal">⚖️ Propose settlement</button>
+  <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU to mediate</a>
+  {% endif %}
 </div>
 
 <form class="chat-input" method="post" action="/chat/{{ item.id }}">
-  <input name="body" placeholder="Arrange the meetup, ask a question…" autocomplete="off" required>
+  <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status == 'disputed' %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off" required>
   <button class="btn-primary">Send</button>
 </form>
+
+{% if item.status in ('negotiating','agreement_pending') %}
+<div class="modal" id="offer-modal" hidden>
+  <div class="modal-card">
+    <h2>Make an offer</h2>
+    <p class="muted">Requester's offer: <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits.</p>
+    <p class="ai-suggestion"><b>✨ IoU suggested</b><span class="offer-num">{{ rec.recommended }}</span> credits <span class="muted">({{ rec.range[0] }}–{{ rec.range[1] }} range)</span></p>
+    <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
+      <input type="hidden" name="next" value="/chat/{{ item.id }}">
+      <input type="hidden" name="confirm_outside_range" value="1">
+      <div class="offer-options">
+        <label class="offer-option">
+          <input type="radio" name="mode" value="accept">
+          <span class="opt-title">Accept offer</span>
+          <span class="opt-value">{{ item.requester_value }} <small>credits</small></span>
+        </label>
+        <label class="offer-option selected">
+          <input type="radio" name="mode" value="custom" checked>
+          <span class="opt-title">Make an offer</span>
+          <input class="opt-input" type="number" name="amount" min="1" value="{{ rec.recommended }}">
+        </label>
+      </div>
+      <p class="range-warning" hidden>⚠️ This is outside the requester's preferred range ({{ item.requester_value - item.requester_buffer }}–{{ item.requester_value + item.requester_buffer }}). You can still send it — they can accept or counter.</p>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send offer</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status in ('confirmed','scheduled') %}
+<div class="modal" id="meetup-modal" hidden>
+  <div class="modal-card">
+    <h2>Propose a meeting</h2>
+    <form method="post" action="/requests/{{ item.id }}/meetup" class="modal-form">
+      <label>Date<input type="date" name="date" required></label>
+      <label>Time<input type="time" name="time" required></label>
+      <label>Location<input type="text" name="location" required placeholder="e.g. MTR station exit A" value="{{ item.location or '' }}"></label>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send proposal</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status == 'disputed' %}
+<div class="modal" id="settlement-modal" hidden>
+  <div class="modal-card">
+    <h2>Propose a settlement</h2>
+    <p class="muted">{{ item.agreed_value }} credits are frozen. Propose how many go back to the requester.</p>
+    <form method="post" action="/requests/{{ item.id }}/settlement" class="modal-form">
+      <label>Refund to requester (0–{{ item.agreed_value }})<input type="number" name="amount" min="0" max="{{ item.agreed_value }}" value="{{ item.agreed_value // 2 }}" required></label>
+      <label>Reason (optional)<input type="text" name="reason" placeholder="Why is this fair?"></label>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send proposal</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
 {% block scripts %}
 <script>
 const box = document.querySelector("#chat-box");
 box.scrollTop = box.scrollHeight;
+let lastCount = box.children.length;
+setInterval(async () => {
+  try {
+    const res = await fetch("/chat/{{ item.id }}/feed");
+    if (!res.ok) return;
+    const html = await res.text();
+    const tmp = document.createElement("div");
+    tmp.innerHTML = html;
+    const nearBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 60;
+    if (tmp.children.length !== lastCount || tmp.innerHTML.trim() !== box.innerHTML.trim()) {
+      box.innerHTML = tmp.innerHTML;
+      if (nearBottom) box.scrollTop = box.scrollHeight;
+      lastCount = tmp.children.length;
+      bindBubbleButtons();
+    }
+  } catch (e) {}
+}, 3000);
+function bindBubbleButtons() {
+  box.querySelectorAll('[data-counter-offer]').forEach(b => b.addEventListener('click', () => {
+    const modal = document.getElementById('offer-modal');
+    if (modal) modal.hidden = false;
+  }));
+  box.querySelectorAll('[data-counter-settlement]').forEach(b => b.addEventListener('click', () => {
+    const modal = document.getElementById('settlement-modal');
+    if (modal) modal.hidden = false;
+  }));
+}
+bindBubbleButtons();
+document.querySelectorAll('[data-modal-open]').forEach(b => b.addEventListener('click', () => {
+  document.getElementById(b.dataset.modalOpen).hidden = false;
+}));
+document.querySelectorAll('[data-modal-close]').forEach(b => b.addEventListener('click', () => {
+  b.closest('.modal').hidden = true;
+}));
+const amountInput = document.querySelector('.opt-input');
+if (amountInput) {
+  amountInput.addEventListener('focus', () => {
+    const custom = document.querySelector('input[name="mode"][value="custom"]');
+    if (custom) { custom.checked = true; syncOptions(); }
+  });
+  amountInput.addEventListener('input', () => {
+    const lo = {{ item.requester_value - item.requester_buffer }}, hi = {{ item.requester_value + item.requester_buffer }};
+    const v = parseInt(amountInput.value || '0', 10);
+    const warn = document.querySelector('.range-warning');
+    if (warn) warn.hidden = v >= lo && v <= hi;
+  });
+}
+document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', syncOptions));
+function syncOptions() {
+  document.querySelectorAll('.offer-option').forEach(o => {
+    o.classList.toggle('selected', o.querySelector('input[name="mode"]').checked);
+  });
+}
 </script>
 {% endblock %}

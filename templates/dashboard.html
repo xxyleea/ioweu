@@ -38,14 +38,27 @@
   <a class="btn-ghost" href="/my-posts">Track my posts →</a>
 </div>
 
-<div class="card" style="margin-top:1.6rem">
-  <h2>Credit activity</h2>
-  <ul class="ledger-list">
-  {% for item in ledger[:6] %}
-    <li><span class="ledger-amount {% if item.amount > 0 %}pos{% else %}neg{% endif %}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</span><div><b>{{ item.kind.replace('_',' ') }}</b>{% if item.title %} · {{ item.title }}{% endif %}<br><small>{{ item.description }}</small></div></li>
-  {% else %}<li class="empty">No ledger activity yet.</li>{% endfor %}
+{% if notifications %}
+<div class="card notif-card">
+  <h2>🔔 Notifications</h2>
+  <ul class="notif-list">
+    {% for note in notifications %}
+    <li class="{% if not note.is_read %}unread{% endif %}">
+      <span class="notif-dot"></span>
+      <a href="/notifications/{{ note.id }}/go">{{ note.body }}</a>
+      <small>{{ note.created_at[:16]|replace('T',' ') }}</small>
+    </li>
+    {% endfor %}
   </ul>
-  <a class="btn-ghost" href="/help">How IoU works →</a>
+</div>
+{% endif %}
+
+<div class="card history-link-card">
+  <div>
+    <h2>Credit activity</h2>
+    <p class="muted">Escrow holds, payments, refunds and kudos bonuses.</p>
+  </div>
+  <a class="btn-ghost" href="/history">View history →</a>
 </div>
 
 {% if user.is_moderator %}
@@ -53,7 +66,7 @@
 <div class="card">
   {% for dispute in disputes %}
   <div class="moderator-item"><b>{{ dispute.title }}</b><p>{{ dispute.description }}</p><small>Requested refund: {{ dispute.requested_refund_amount }} · {{ dispute.recommendation }}</small>
-    <form class="mod-form" method="post" action="/disputes/{{ dispute.id }}/decide"><select name="decision"><option value="deny">No refund</option><option value="partial">Partial refund</option><option value="full">Full refund</option></select><button class="btn-small">Record decision</button></form>
+    <a class="btn-small btn-primary" href="/disputes/{{ dispute.id }}/review">Review dispute →</a>
   </div>
   {% else %}<p class="empty">No open disputes. Enjoy the calm.</p>{% endfor %}
 </div>
