@@ -7,6 +7,7 @@
         <div class="chat-bubble special-bubble offer-bubble state-{{ m.status or 'done' }}">
           <small>{{ m.sender_name }}</small>
           <b>💰 {{ meta.amount }} credits</b>
+          {% if rec %}<small class="ref-line">✨ reference {{ rec.range[0] }}–{{ rec.range[1] }}</small>{% endif %}
           {% if m.status == 'pending' %}
             {% if m.sender_id != user.id %}
             <div class="bubble-actions">

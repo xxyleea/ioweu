@@ -5,7 +5,7 @@
 <header class="page-head">
   <div>
     <a class="btn-ghost btn-back" href="javascript:history.back()">← Back</a>
-    <h1 style="margin-top:.8rem">{{ genre_emoji[item.category] if item.category in genre_emoji }} {{ item.title }}</h1>
+    <h1 style="margin-top:.8rem">{{ genre_emoji[item.category] if item.category in genre_emoji }} {{ item.title }} <span class="status s-{{ item.status }} title-status">{{ status_label }}</span></h1>
     <p class="muted">{{ item.category }} · requested by {{ item.requester_name }}{% if item.provider_name %} · helper {{ item.provider_name }}{% endif %}{% if item.location %} · 📍 {{ item.location }}{% endif %}{% if item.preferred_time %} · 🕒 meetup {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %} · ⏰ needed by {{ item.needed_by }}{% endif %}</p>
   </div>
   {% if involved and message_count %}
@@ -30,7 +30,7 @@
   <p class="hero-meetup">📅 {{ item.meetup_date }} at {{ item.meetup_time }} · 📍 {{ item.meetup_location }}</p>
   {% endif %}
   <div class="hero-actions">
-    {% if hero.action %}
+    {% if hero.action and item.status != 'open' %}
       {% if hero.action.modal %}
       <button class="btn-primary" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
       {% else %}
@@ -82,22 +82,22 @@
     <h2>Request details</h2>
     <p>{{ item.description }}</p>
     <p class="offer"><b>Requester offer</b><span class="offer-num">{{ item.requester_value }} <small>± {{ item.requester_buffer }}</small></span> credits</p>
-    <p class="ai-suggestion"><b>IoU recommendation</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span>({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
+    <p class="ai-suggestion"><b>Neighbourhood reference</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span>({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
     {% if item.completion_note %}
     <h3>Completion note</h3>
     <p>{{ item.completion_note }}</p>
     {% endif %}
   </div>
-  <aside class="card how-card detail-side">
-    <h2>How this exchange works</h2>
-    <ol class="steps-list">
-      <li><b>Offer to help</b> — agree a fair value together in chat.</li>
-      <li><b>Confirm exchange</b> — both sides confirm, credits go into escrow.</li>
-      <li><b>Meet &amp; do the task</b> — schedule a time and place.</li>
-      <li><b>Review &amp; release</b> — the owner confirms completion and escrow is released.</li>
-    </ol>
-    {% if involved %}<a class="btn-ghost" href="/chat/{{ item.id }}">Open your chat thread →</a>{% endif %}
-  </aside>
+  {% if item.status == 'open' and not is_owner %}
+  <div class="detail-offer-row">
+    <button class="btn-primary btn-lg" data-modal-open="offer-modal">🤝 Offer to Help</button>
+  </div>
+  {% endif %}
+  {% if item.status == 'open' and is_owner %}
+  <div class="detail-offer-row">
+    <p class="muted">Waiting for neighbours to offer help. Share the link or check back later.</p>
+  </div>
+  {% endif %}
 </div>
 
 {% if item.status == 'open' and not is_owner %}
@@ -105,7 +105,7 @@
   <div class="modal-card">
     <h2>Offer to help</h2>
     <p class="muted">The requester is offering <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits. Accept it, or propose your own value.</p>
-    <p class="ai-suggestion"><b>✨ IoU suggested</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span class="muted">({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
+    <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span class="muted">({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
     <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
       <input type="hidden" name="next" value="/requests/{{ item.id }}">
       <input type="hidden" name="confirm_outside_range" value="1">
@@ -137,6 +137,21 @@
     <form method="post" action="/requests/{{ item.id }}/confirm-exchange" class="modal-actions">
       <button type="button" class="btn-ghost" data-modal-close>Back</button>
       <button class="btn-primary">Confirm Exchange</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status == 'in_progress' and is_provider %}
+<div class="modal" id="complete-modal" hidden>
+  <div class="modal-card">
+    <h2>Mark as Complete</h2>
+    <p class="muted">{{ item.agreed_value }} credits are held in escrow and released once the owner confirms.</p>
+    <form method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete" class="modal-form">
+      <label>Completion note (optional)<textarea name="note" rows="3" placeholder="What did you do? Anything the owner should know?"></textarea></label>
+      <label>Upload evidence (optional, up to 3 files)<input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" multiple></label>
+      <label class="check-row"><input type="checkbox" name="confirm_done" value="1" required> I confirm this task has been completed.</label>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Submit Completion</button></div>
     </form>
   </div>
 </div>

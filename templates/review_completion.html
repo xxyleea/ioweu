@@ -27,10 +27,27 @@
   <p class="muted">Confirming releases <b>{{ item.agreed_value }} credits</b> from escrow to {{ item.provider_name }}.</p>
   <div class="modal-actions">
     <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise Dispute</a>
-    <form method="post" action="/requests/{{ item.id }}/review/confirm">
-      <button class="btn-primary">Confirm Completion — release {{ item.agreed_value }} credits</button>
-    </form>
+    <button class="btn-primary" data-modal-open="release-modal">Confirm Completion — release {{ item.agreed_value }} credits</button>
   </div>
 </section>
+
+<div class="modal" id="release-modal" hidden>
+  <div class="modal-card">
+    <h2>Confirm completion?</h2>
+    <p>You are confirming the task was completed as agreed. <b>{{ item.agreed_value }} credits</b> will be released to {{ item.provider_name }}.</p>
+    <form method="post" action="/requests/{{ item.id }}/review/confirm" class="modal-actions">
+      <button type="button" class="btn-ghost" data-modal-close>Cancel</button>
+      <button class="btn-primary">Confirm & release</button>
+    </form>
+  </div>
+</div>
+<script>
+document.querySelectorAll('[data-modal-open]').forEach(b => b.addEventListener('click', () => {
+  document.getElementById(b.dataset.modalOpen).hidden = false;
+}));
+document.querySelectorAll('[data-modal-close]').forEach(b => b.addEventListener('click', () => {
+  b.closest('.modal').hidden = true;
+}));
+</script>
 </div>
 {% endblock %}

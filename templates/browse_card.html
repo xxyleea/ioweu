@@ -1,0 +1,23 @@
+<article class="card request-card browse-card cat-{{ item.category|slug }}">
+  <a class="browse-card-link" href="/requests/{{ item.id }}">
+    <div class="row">
+      <div class="card-head">
+        <span class="cat-dot cat-{{ item.category|slug }}"></span>
+        <small class="cat-name">{{ item.category }}</small>
+        <h2>{{ item.title }}
+          <span class="status s-{{ item.status }}">{{ status_labels[item.status] if status_labels is defined and item.status in status_labels else item.status.replace('_',' ') }}</span>
+        </h2>
+        <small class="muted browse-meta">
+          {% if item.preferred_time %}🕒 {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %}⏰ by {{ item.needed_by }}{% endif %}
+          {% if item.location %} · 📍 {{ item.location }}{% endif %}
+        </small>
+        <span class="browse-offer"><b>{{ item.requester_value }}</b> credits offered</span>
+      </div>
+      <div class="badge-col">
+        {% if matched_ids is defined and item.id in matched_ids %}<span class="match-badge">★ For you</span>{% endif %}
+        {% if item.urgency and item.urgency != 'flexible' %}<span class="urgency urgency-{{ item.urgency }}">{{ item.urgency }}</span>{% endif %}
+        <span class="btn-ghost btn-sm browse-view">View detail →</span>
+      </div>
+    </div>
+  </a>
+</article>

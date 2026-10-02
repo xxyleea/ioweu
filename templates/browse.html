@@ -29,7 +29,7 @@
 
 <div class="card-grid" id="board">
 {% for item in community_requests %}
-  <div class="grid-item" data-category="{{ item.category }}" data-credits="{{ item.requester_value }}" data-effort="{{ item.effort_minutes or 30 }}" data-near="{{ 1 if item.location and user_district and item.location.strip().lower() == user_district else 0 }}" data-match="{{ 1 if item.id in matched_ids else 0 }}">{% include "request_card.html" %}</div>
+  <div class="grid-item" data-category="{{ item.category }}" data-credits="{{ item.requester_value }}" data-effort="{{ item.effort_minutes or 30 }}" data-near="{{ 1 if item.location and user_district and item.location.strip().lower() == user_district else 0 }}" data-match="{{ 1 if item.id in matched_ids else 0 }}">{% include "browse_card.html" %}</div>
 {% else %}
   <div class="card empty-card"><p class="empty">No open requests from other residents right now. Check back soon.</p></div>
 {% endfor %}

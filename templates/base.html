@@ -3,6 +3,7 @@
 <body class="app-body">
 <nav class="sidebar">
   <a class="brand" href="/"><span class="brand-dot"></span>IoU</a>
+  <a class="bell {% if page == 'notifications' %}active{% endif %}" href="/notifications" title="Notifications">🔔{% if unread_notifs or unread_msgs %}<span class="bell-badge">{{ (unread_notifs or 0) + (unread_msgs or 0) }}</span>{% endif %}</a>
   <p class="brand-tag">Small favours,<br>fair credit.</p>
   <div class="nav-links">
     <a class="nav-link {% if page == 'home' %}active{% endif %}" href="/"><span class="nav-ico">⌂</span>Home</a>
@@ -20,5 +21,31 @@
   </div>
 </nav>
 <main class="content">{% block content %}{% endblock %}</main>
+<div class="toast" id="toast" hidden></div>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const msg = params.get('toast');
+  if (!msg) return;
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.hidden = false;
+  requestAnimationFrame(() => t.classList.add('show'));
+  params.delete('toast');
+  const clean = location.pathname + (params.toString() ? '?' + params.toString() : '');
+  history.replaceState(null, '', clean);
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.hidden = true, 300); }, 2500);
+})();
+</script>
+<script>
+document.addEventListener('submit', (e) => {
+  const btn = e.target.querySelector('button:not([type=button])');
+  if (!btn || btn.dataset.noLoading) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+});
+</script>
 {% block scripts %}{% endblock %}
 </body></html>

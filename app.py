@@ -172,12 +172,18 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
                 body TEXT NOT NULL, link TEXT NOT NULL DEFAULT '/',
-                is_read INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT 'info',
+                created_at TEXT NOT NULL,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
             CREATE TABLE IF NOT EXISTS thread_reads (
                 user_id INTEGER NOT NULL, request_id INTEGER NOT NULL,
                 last_read_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(user_id, request_id)
+            );
+            CREATE TABLE IF NOT EXISTS pins (
+                user_id INTEGER NOT NULL, request_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
                 PRIMARY KEY(user_id, request_id)
             );
             """
@@ -216,6 +222,9 @@ def init_db() -> None:
         ):
             if column not in columns:
                 connection.execute(f"ALTER TABLE requests ADD COLUMN {column} {definition}")
+        notif_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notifications)")}
+        if "kind" not in notif_columns:
+            connection.execute("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'info'")
         message_columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)")}
         for column, definition in (("meta", "TEXT"), ("status", "TEXT")):
             if column not in message_columns:
@@ -380,6 +389,9 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
         with db() as connection:
             auto_resolve_reviews(connection)
             context["unread_msgs"] = unread_message_count(connection, user["id"])
+            context["unread_notifs"] = connection.execute(
+                "SELECT COUNT(*) c FROM notifications WHERE user_id=? AND is_read=0",
+                (user["id"],)).fetchone()["c"]
     return templates.TemplateResponse(request=request, name=template, context=context)
 
 
@@ -411,12 +423,13 @@ def add_message(connection: sqlite3.Connection, request_id: int, sender_id: int 
     return cursor.lastrowid
 
 
-def notify(connection: sqlite3.Connection, user_id: int | None, body: str, link: str) -> None:
+def notify(connection: sqlite3.Connection, user_id: int | None, body: str, link: str,
+           kind: str = "info") -> None:
     if not user_id:
         return
     connection.execute(
-        "INSERT INTO notifications(user_id,body,link,created_at) VALUES (?,?,?,?)",
-        (user_id, body, link, now()),
+        "INSERT INTO notifications(user_id,body,link,kind,created_at) VALUES (?,?,?,?,?)",
+        (user_id, body, link, kind, now()),
     )
 
 
@@ -511,8 +524,14 @@ def auto_resolve_reviews(connection: sqlite3.Connection) -> None:
         outcome = f"approved a {refund} credit refund" if approved else "rejected the refund request"
         add_message(connection, dispute["rid"], None, "system",
                     f"A community moderator reviewed this dispute and {outcome}.")
-        notify(connection, item["requester_id"], f"Your dispute was reviewed — {outcome}.", f"/requests/{dispute['rid']}")
-        notify(connection, item["provider_id"], f"Your dispute was reviewed — {outcome}.", f"/requests/{dispute['rid']}")
+        notify(connection, item["requester_id"], f"Your dispute was reviewed — {outcome}.", f"/requests/{dispute['rid']}", kind="success")
+        notify(connection, item["provider_id"], f"Your dispute was reviewed — {outcome}.", f"/requests/{dispute['rid']}", kind="success")
+
+
+def redirect_toast(path: str, message: str) -> RedirectResponse:
+    from urllib.parse import quote
+    sep = "&" if "?" in path else "?"
+    return RedirectResponse(f"{path}{sep}toast={quote(message)}", status_code=303)
 
 
 def redirect_back(next: str, fallback: str = "/") -> RedirectResponse:
@@ -575,11 +594,17 @@ def home(request: Request):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         requests, recommendations = load_board(connection)
+        pinned_ids = {row["request_id"] for row in connection.execute(
+            "SELECT request_id FROM pins WHERE user_id=?", (user["id"],)).fetchall()}
         active_items = [
             item for item in requests
             if (item["requester_id"] == user["id"] or item["provider_id"] == user["id"])
             and item["status"] not in ("completed", "resolved")
         ]
+        active_items.sort(key=lambda i: i["id"] not in pinned_ids)
+        my_tasks = [i for i in active_items if i["requester_id"] == user["id"]]
+        helping_tasks = [i for i in active_items if i["provider_id"] == user["id"]]
+        pinned_items = [i for i in requests if i["id"] in pinned_ids]
         history = load_history(connection, user["id"])
         disputes = load_disputes(connection)
         ledger = connection.execute(
@@ -600,12 +625,20 @@ def home(request: Request):
             "kudos": connection.execute(
                 "SELECT COALESCE(SUM(kudos_bonus),0) s FROM transactions WHERE provider_id=?",
                 (user["id"],)).fetchone()["s"],
+            "incoming": connection.execute(
+                """SELECT COALESCE(SUM(agreed_value),0) s FROM requests
+                   WHERE provider_id=? AND status IN ('confirmed','scheduled','in_progress','completion_submitted')""",
+                (user["id"],)).fetchone()["s"],
         }
     return render(
         request,
         "dashboard.html",
         page="home",
         active_items=active_items,
+        my_tasks=my_tasks,
+        helping_tasks=helping_tasks,
+        pinned_items=pinned_items,
+        pinned_ids=pinned_ids,
         history=history,
         disputes=disputes,
         ledger=ledger,
@@ -629,6 +662,31 @@ def credit_history(request: Request):
     return render(request, "history.html", page="account", ledger=ledger)
 
 
+@app.get("/notifications", response_class=HTMLResponse)
+def notifications_page(request: Request, tab: str = "system"):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        notifs = connection.execute(
+            "SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50",
+            (user["id"],)).fetchall()
+        threads = connection.execute(
+            """SELECT r.id, r.title, r.status, r.requester_id, r.provider_id,
+                      ru.name requester_name, pu.name provider_name,
+                      (SELECT body FROM messages WHERE request_id=r.id ORDER BY id DESC LIMIT 1) last_body,
+                      (SELECT created_at FROM messages WHERE request_id=r.id ORDER BY id DESC LIMIT 1) last_at
+               FROM requests r
+               JOIN users ru ON ru.id=r.requester_id
+               LEFT JOIN users pu ON pu.id=r.provider_id
+               WHERE (r.requester_id=? OR r.provider_id=?)
+                 AND EXISTS (SELECT 1 FROM messages WHERE request_id=r.id)
+               ORDER BY last_at DESC""",
+            (user["id"], user["id"])).fetchall()
+    return render(request, "notifications.html", page="notifications",
+                  notifs=notifs, threads=threads, tab=tab)
+
+
 @app.get("/my-posts", response_class=HTMLResponse)
 def my_posts(request: Request):
     user = current_user(request)
@@ -636,7 +694,10 @@ def my_posts(request: Request):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         requests, recommendations = load_board(connection)
+        pinned_ids = {row["request_id"] for row in connection.execute(
+            "SELECT request_id FROM pins WHERE user_id=?", (user["id"],)).fetchall()}
         mine = [item for item in requests if item["requester_id"] == user["id"]]
+        mine.sort(key=lambda i: i["id"] not in pinned_ids)
         my_open = [item for item in mine if item["status"] == "open"]
         my_active = [item for item in mine if item["status"] not in ("completed", "resolved", "open")]
         my_completed = [item for item in mine if item["status"] in ("completed", "resolved")]
@@ -652,6 +713,7 @@ def my_posts(request: Request):
         history=history,
         disputes=disputes,
         recommendations=recommendations,
+        pinned_ids=pinned_ids,
         task_categories=TASK_CATEGORIES,
     )
 
@@ -663,10 +725,13 @@ def helping(request: Request):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         requests, recommendations = load_board(connection)
+        pinned_ids = {row["request_id"] for row in connection.execute(
+            "SELECT request_id FROM pins WHERE user_id=?", (user["id"],)).fetchall()}
         joined = [
             item for item in requests
             if item["provider_id"] == user["id"] and item["requester_id"] != user["id"]
         ]
+        joined.sort(key=lambda i: i["id"] not in pinned_ids)
         helping_active = [item for item in joined if item["status"] not in ("completed", "resolved")]
         helping_done = [item for item in joined if item["status"] in ("completed", "resolved")]
         history = load_history(connection, user["id"])
@@ -680,6 +745,7 @@ def helping(request: Request):
         history=history,
         disputes=disputes,
         recommendations=recommendations,
+        pinned_ids=pinned_ids,
         task_categories=TASK_CATEGORIES,
     )
 
@@ -948,10 +1014,27 @@ def chat_page(request: Request, request_id: int):
                      (item["provider_id"] == user["id"] and item["confirm_provider"])
         hero = hero_for(item, user["id"], pending_offer, pending_meetup, dispute, my_confirm)
         mark_thread_read(connection, request_id, user["id"])
+        threads = connection.execute(
+            """SELECT r.id, r.title, r.status,
+                      u.name requester_name, p.name provider_name,
+                      (SELECT COUNT(*) FROM messages m
+                        LEFT JOIN thread_reads tr ON tr.request_id=m.request_id AND tr.user_id=?
+                        WHERE m.request_id=r.id AND m.sender_id IS NOT NULL AND m.sender_id != ?
+                          AND m.id > COALESCE(tr.last_read_id, 0)) unread_count
+               FROM requests r JOIN users u ON u.id=r.requester_id
+               LEFT JOIN users p ON p.id=r.provider_id
+               WHERE (r.requester_id=? OR r.provider_id=?)
+                 AND EXISTS (SELECT 1 FROM messages m WHERE m.request_id=r.id)
+               ORDER BY (SELECT created_at FROM messages m WHERE m.request_id=r.id
+                         ORDER BY m.created_at DESC, m.id DESC LIMIT 1) DESC""",
+            (user["id"], user["id"], user["id"], user["id"]),
+        ).fetchall()
     return render(request, "chat.html", page="messages", item=item, messages=messages,
                   pending_offer=pending_offer, pending_meetup=pending_meetup,
                   pending_settlement=pending_settlement, dispute=dispute, rec=rec,
                   my_confirm=my_confirm, hero=hero, genre_emoji=GENRE_EMOJI,
+                  threads=threads, step_index=STATUS_STEP.get(item["status"], 0),
+                  timeline_steps=TIMELINE_STEPS,
                   status_label=STATUS_LABELS.get(item["status"], item["status"]))
 
 
@@ -972,9 +1055,11 @@ def chat_feed(request: Request, request_id: int):
             (request_id,),
         ).fetchall()
         mark_thread_read(connection, request_id, user["id"])
-    return templates.TemplateResponse(
-        request=request, name="_chat_messages.html",
-        context={"messages": messages, "user": user})
+        rec = recommendation(connection, item["category"], item["effort_minutes"] or 30,
+                             item["complexity"] or 3, item["quality_score"] or 3)
+    content = templates.get_template("_chat_messages.html").render(
+        messages=messages, user=user, rec=rec)
+    return HTMLResponse(content, headers={"X-Status": item["status"]})
 
 
 @app.post("/chat/{request_id}")
@@ -1077,7 +1162,7 @@ def give_kudos(request: Request, request_id: int, next: str = Form(""), tags: li
             add_message(connection, request_id, None, "system",
                         f"Kudos{tag_text}! The provider received a {bonus} credit bonus.")
             notify(connection, item["provider_id"],
-                   f"You received Kudos (+{bonus} credits){tag_text}.", f"/requests/{request_id}")
+                   f"You received Kudos (+{bonus} credits){tag_text}.", f"/requests/{request_id}", kind="success")
     return redirect_back(next, f"/requests/{request_id}")
 
 
@@ -1216,7 +1301,7 @@ def hero_for(item, user_id, offer, meetup, dispute, my_confirm):
     if status == "in_progress":
         if is_provider:
             return {"actor": "you", "label": "Task in progress. Mark it complete when done.",
-                    "action": {"text": "Mark as Complete", "href": f"/requests/{rid}/complete"}}
+                    "action": {"text": "Mark as Complete", "modal": "complete-modal"}}
         return {"actor": "other", "label": "The helper is working on your task.", "action": None}
     if status == "completion_submitted":
         if is_owner:
@@ -1273,11 +1358,12 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
                     f"{role} offered {value} credits", meta=json.dumps({"amount": value}), status="pending")
         target = item["requester_id"] if not is_owner else item["provider_id"]
         notify(connection, target,
-               f"New offer: {value} credits for \"{item['title']}\".", f"/chat/{request_id}")
+               f"New offer: {value} credits for \"{item['title']}\".", f"/chat/{request_id}", kind="action")
         if mode == "accept":
             add_message(connection, request_id, None, "system",
                         f"{user['name']} accepted the current offer of {value} credits.")
-    return redirect_back(next, f"/chat/{request_id}")
+    target = next if next.startswith("/") and not next.startswith("//") else f"/chat/{request_id}"
+    return redirect_toast(target, "Offer sent")
 
 
 @app.post("/offers/{message_id}/accept")
@@ -1303,8 +1389,8 @@ def accept_offer(request: Request, message_id: int):
                     f"An offer of {amount} credits has been accepted. Waiting for the other participant to confirm the exchange.")
         notify(connection, other_party(item, user["id"]),
                f"The other participant accepted your offer of {amount} credits — please confirm the exchange.",
-               f"/requests/{item['id']}")
-    return RedirectResponse(f"/chat/{offer['request_id']}", status_code=303)
+               f"/requests/{item['id']}", kind="action")
+    return redirect_toast(f"/chat/{offer['request_id']}", "Offer accepted")
 
 
 @app.post("/offers/{message_id}/decline")
@@ -1327,7 +1413,7 @@ def decline_offer(request: Request, message_id: int):
         add_message(connection, item["id"], None, "system",
                     "The offer was declined. The request is open on the board again.")
         notify(connection, other_party(item, user["id"]),
-               f"Your offer for \"{item['title']}\" was declined.", f"/requests/{item['id']}")
+               f"Your offer for \"{item['title']}\" was declined.", f"/requests/{item['id']}", kind="action")
     return RedirectResponse(f"/requests/{offer['request_id']}", status_code=303)
 
 
@@ -1349,6 +1435,13 @@ def confirm_exchange(request: Request, request_id: int):
         item = load_request(connection, request_id)
         if item["confirm_requester"] and item["confirm_provider"]:
             agreed = item["agreed_value"]
+            requester = connection.execute("SELECT balance FROM users WHERE id=?",
+                                           (item["requester_id"],)).fetchone()
+            if requester["balance"] - agreed < MIN_BALANCE:
+                return render(request, "error.html", message=(
+                    f"The requester doesn't have enough available credits for this exchange "
+                    f"({requester['balance']} available, {agreed} needed). Please renegotiate a lower value in the chat."
+                ))
             connection.execute(
                 "UPDATE users SET balance=balance-?, held_balance=held_balance+? WHERE id=?",
                 (agreed, agreed, item["requester_id"]),
@@ -1370,13 +1463,13 @@ def confirm_exchange(request: Request, request_id: int):
                             f"Meeting fixed from the request: {date_part} at {time_part or 'flexible time'}, {item['location'] or 'location TBD'}.")
                 notify(connection, other_party(item, user["id"]),
                        "Exchange confirmed — credits are in escrow. The meetup time is already fixed.",
-                       f"/requests/{request_id}")
+                       f"/requests/{request_id}", kind="success")
             else:
                 connection.execute("UPDATE requests SET status='confirmed' WHERE id=?", (request_id,))
                 notify(connection, other_party(item, user["id"]),
                        "Exchange confirmed — credits are in escrow. Time to schedule the task.",
-                       f"/requests/{request_id}")
-    return RedirectResponse(f"/requests/{request_id}", status_code=303)
+                       f"/requests/{request_id}", kind="success")
+    return redirect_toast(f"/chat/{request_id}", "Exchange confirmed — credits are in escrow")
 
 
 @app.post("/requests/{request_id}/meetup")
@@ -1398,8 +1491,8 @@ def propose_meetup(request: Request, request_id: int, date: str = Form(...),
                     f"Meeting proposal: {date} at {time}, {location}",
                     meta=json.dumps({"date": date, "time": time, "location": location}), status="pending")
         notify(connection, other_party(item, user["id"]),
-               f"Meeting proposal for \"{item['title']}\": {date} at {time}.", f"/chat/{request_id}")
-    return RedirectResponse(f"/chat/{request_id}", status_code=303)
+               f"Meeting proposal for \"{item['title']}\": {date} at {time}.", f"/chat/{request_id}", kind="action")
+    return redirect_toast(f"/chat/{request_id}", "Meeting proposal sent")
 
 
 @app.post("/meetups/{message_id}/{action}")
@@ -1423,14 +1516,15 @@ def respond_meetup(request: Request, message_id: int, action: str):
             add_message(connection, item["id"], None, "system",
                         f"Meeting confirmed for {meta.get('date')} at {meta.get('time')}, {meta.get('location')}.")
             notify(connection, other_party(item, user["id"]),
-                   f"Meeting confirmed for \"{item['title']}\".", f"/requests/{item['id']}")
+                   f"Meeting confirmed for \"{item['title']}\".", f"/requests/{item['id']}", kind="success")
         elif action == "decline":
             connection.execute("UPDATE messages SET status='declined' WHERE id=?", (message_id,))
             add_message(connection, item["id"], None, "system",
                         "Meeting proposal declined. Feel free to propose another time.")
             notify(connection, other_party(item, user["id"]),
-                   "Meeting proposal declined.", f"/chat/{item['id']}")
-    return RedirectResponse(f"/chat/{msg['request_id']}", status_code=303)
+                   "Meeting proposal declined.", f"/chat/{item['id']}", kind="info")
+    toast = "Meeting confirmed" if action == "accept" else "Meeting proposal declined"
+    return redirect_toast(f"/chat/{msg['request_id']}", toast)
 
 
 @app.post("/requests/{request_id}/start")
@@ -1447,8 +1541,8 @@ def start_request(request: Request, request_id: int):
                                (now(), request_id))
             add_message(connection, request_id, None, "system", "Task started.")
             notify(connection, other_party(item, user["id"]),
-                   f"Task started: \"{item['title']}\".", f"/requests/{request_id}")
-    return RedirectResponse(f"/requests/{request_id}", status_code=303)
+                   f"Task started: \"{item['title']}\".", f"/requests/{request_id}", kind="info")
+    return redirect_toast(f"/chat/{request_id}", "Task started")
 
 
 @app.get("/requests/{request_id}/complete", response_class=HTMLResponse)
@@ -1496,8 +1590,8 @@ async def complete_submit(request: Request, request_id: int, note: str = Form(""
                     "Task completion has been submitted for review.")
         notify(connection, item["requester_id"],
                f"The task \"{item['title']}\" has been marked as completed. Please review it.",
-               f"/requests/{request_id}/review")
-    return RedirectResponse(f"/requests/{request_id}", status_code=303)
+               f"/requests/{request_id}/review", kind="action")
+    return redirect_toast(f"/chat/{request_id}", "Completion submitted — waiting for the owner to review")
 
 
 @app.get("/requests/{request_id}/review", response_class=HTMLResponse)
@@ -1528,8 +1622,8 @@ def review_confirm(request: Request, request_id: int):
                     f"Task completed and {item['agreed_value']} credits released.")
         notify(connection, item["provider_id"],
                f"Completion confirmed — {item['agreed_value']} credits released to you.",
-               f"/requests/{request_id}")
-    return RedirectResponse(f"/requests/{request_id}", status_code=303)
+               f"/requests/{request_id}", kind="success")
+    return redirect_toast(f"/chat/{request_id}", "✓ Task completed — credits released")
 
 
 @app.get("/requests/{request_id}/dispute", response_class=HTMLResponse)
@@ -1586,7 +1680,7 @@ async def dispute_submit(request: Request, request_id: int, reason: str = Form(.
                     "Dispute opened. Credits are temporarily frozen — both participants can try to resolve the issue together.")
         notify(connection, item["provider_id"],
                f"A dispute was opened for \"{item['title']}\". Credits are frozen.",
-               f"/chat/{request_id}")
+               f"/chat/{request_id}", kind="action")
     return RedirectResponse(f"/requests/{request_id}", status_code=303)
 
 
@@ -1610,7 +1704,7 @@ def propose_settlement(request: Request, request_id: int, amount: int = Form(...
                     f"Proposed refund: {amount} credits" + (f" — {reason}" if reason else ""),
                     meta=json.dumps({"amount": amount, "reason": reason}), status="pending")
         notify(connection, other_party(item, user["id"]),
-               f"Settlement proposal: {amount} credits refund.", f"/chat/{request_id}")
+               f"Settlement proposal: {amount} credits refund.", f"/chat/{request_id}", kind="action")
     return RedirectResponse(f"/chat/{request_id}", status_code=303)
 
 
@@ -1638,12 +1732,13 @@ def respond_settlement(request: Request, message_id: int, action: str):
             add_message(connection, item["id"], None, "system",
                         f"Both participants agreed on a settlement ({amount} credits refunded).")
             notify(connection, other_party(item, user["id"]),
-                   "Your dispute has been resolved by agreement.", f"/requests/{item['id']}")
+                   "Your dispute has been resolved by agreement.", f"/requests/{item['id']}", kind="success")
         elif action == "decline":
             connection.execute("UPDATE messages SET status='declined' WHERE id=?", (message_id,))
             add_message(connection, item["id"], None, "system",
                         "Settlement proposal declined.")
-    return RedirectResponse(f"/chat/{msg['request_id']}", status_code=303)
+    toast = "Dispute resolved by agreement" if action == "accept" else "Settlement proposal declined"
+    return redirect_toast(f"/chat/{msg['request_id']}", toast)
 
 
 def mediation_suggestion(connection: sqlite3.Connection, item: sqlite3.Row, dispute: sqlite3.Row) -> dict:
@@ -1711,10 +1806,10 @@ def mediation_accept(request: Request, request_id: int):
             add_message(connection, request_id, None, "system",
                         f"Both participants accepted the suggested resolution ({suggestion['amount']} credits refunded).")
             notify(connection, other_party(item, user["id"]),
-                   "Your dispute has been resolved via mediation.", f"/requests/{request_id}")
+                   "Your dispute has been resolved via mediation.", f"/requests/{request_id}", kind="success")
         else:
             notify(connection, other_party(item, user["id"]),
-                   "A mediation resolution is waiting for your response.", f"/requests/{request_id}/mediation")
+                   "A mediation resolution is waiting for your response.", f"/requests/{request_id}/mediation", kind="action")
     return RedirectResponse(f"/requests/{request_id}/mediation", status_code=303)
 
 
@@ -1779,8 +1874,8 @@ def decide_dispute(request: Request, dispute_id: int, decision: str = Form(...))
                                (now(), dispute["rid"]))
             add_message(connection, dispute["rid"], None, "system",
                         f"A moderator resolved this dispute ({decision}, {refund} credits refunded).")
-            notify(connection, dispute["requester_id"], "Your dispute has been resolved.", f"/requests/{dispute['rid']}")
-            notify(connection, dispute["provider_id"], "Your dispute has been resolved.", f"/requests/{dispute['rid']}")
+            notify(connection, dispute["requester_id"], "Your dispute has been resolved.", f"/requests/{dispute['rid']}", kind="success")
+            notify(connection, dispute["provider_id"], "Your dispute has been resolved.", f"/requests/{dispute['rid']}", kind="success")
     return RedirectResponse("/", status_code=303)
 
 
@@ -1807,8 +1902,26 @@ def dispute_after(request: Request, request_id: int):
             add_message(connection, request_id, None, "system",
                         "A dispute was opened after completion and sent to a community moderator.")
             notify(connection, other_party(item, user["id"]),
-                   f"A dispute was opened for \"{item['title']}\".", f"/requests/{request_id}")
+                   f"A dispute was opened for \"{item['title']}\".", f"/requests/{request_id}", kind="info")
     return RedirectResponse(f"/requests/{request_id}", status_code=303)
+
+
+@app.post("/requests/{request_id}/pin")
+def toggle_pin(request: Request, request_id: int, next: str = Form("")):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        existing = connection.execute(
+            "SELECT 1 FROM pins WHERE user_id=? AND request_id=?",
+            (user["id"], request_id)).fetchone()
+        if existing:
+            connection.execute("DELETE FROM pins WHERE user_id=? AND request_id=?",
+                               (user["id"], request_id))
+        else:
+            connection.execute("INSERT INTO pins(user_id,request_id,created_at) VALUES (?,?,?)",
+                               (user["id"], request_id, now()))
+    return redirect_back(next, f"/requests/{request_id}")
 
 
 @app.post("/requests/{request_id}/cancel")

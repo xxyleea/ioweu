@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}IoU · Notifications{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>🔔 Notifications</h1>
+    <p class="muted">System updates and new messages, all in one place.</p>
+  </div>
+</header>
+
+<div class="notif-tabs">
+  <a class="tab {% if tab == 'system' %}active{% endif %}" href="/notifications?tab=system">System{% if notifs %}<span class="tab-count">{{ notifs|selectattr('is_read','equalto',0)|list|length }}</span>{% endif %}</a>
+  <a class="tab {% if tab == 'messages' %}active{% endif %}" href="/notifications?tab=messages">Messages{% if unread_msgs %}<span class="tab-count">{{ unread_msgs }}</span>{% endif %}</a>
+</div>
+
+{% if tab == 'system' %}
+<div class="card notif-card">
+  {% for n in notifs %}
+  <div class="notif-row {% if not n.is_read %}unread{% endif %}">
+    <span class="notif-kind k-{{ n.kind or 'info' }}">{% if (n.kind or 'info') == 'action' %}Action{% elif n.kind == 'success' %}Done{% else %}Info{% endif %}</span>
+    <div class="notif-body"><b>{{ n.body }}</b></div>
+    <div class="notif-side">
+      <small class="muted">{{ n.created_at[:16].replace('T',' ') }}</small>
+      {% if n.link and (n.kind or 'info') == 'action' %}<a class="btn-ghost btn-sm" href="/notifications/{{ n.id }}/go">Act now →</a>{% elif n.link %}<a class="btn-ghost btn-sm" href="/notifications/{{ n.id }}/go">View →</a>{% endif %}
+    </div>
+  </div>
+  {% else %}<p class="empty">No notifications yet.</p>{% endfor %}
+</div>
+{% else %}
+<div class="card threads-panel">
+  {% for t in threads %}
+  <a class="ws-thread thread-row" href="/chat/{{ t.id }}">
+    <div class="thread-main">
+      <b>{{ t.title }}</b>
+      <small>{{ t.last_body[:90] }}</small>
+    </div>
+    <div class="thread-right">
+      <span class="status s-{{ t.status }}">{{ status_labels[t.status] if t.status in status_labels else t.status.replace('_',' ') }}</span>
+      <small class="muted">{{ t.last_at[:16].replace('T',' ') }}</small>
+    </div>
+  </a>
+  {% else %}<p class="empty threads-empty">No conversations yet.</p>{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

@@ -18,7 +18,7 @@
   <div class="card stat-card stat-blue">
     <span class="stat-label">Held in escrow</span>
     <span class="stat-big">{{ user.held_balance }}</span>
-    <span class="stat-sub">released when tasks complete</span>
+    <span class="stat-sub">released when tasks complete{% if stats.incoming %} · +{{ stats.incoming }} coming to you{% endif %}</span>
   </div>
   <div class="card stat-card stat-pink">
     <span class="stat-label">Exchanges done</span>
@@ -38,18 +38,39 @@
   <a class="btn-ghost" href="/my-posts">Track my posts →</a>
 </div>
 
-{% if notifications %}
-<div class="card notif-card">
-  <h2>🔔 Notifications</h2>
-  <ul class="notif-list">
-    {% for note in notifications %}
-    <li class="{% if not note.is_read %}unread{% endif %}">
-      <span class="notif-dot"></span>
-      <a href="/notifications/{{ note.id }}/go">{{ note.body }}</a>
-      <small>{{ note.created_at[:16]|replace('T',' ') }}</small>
-    </li>
-    {% endfor %}
-  </ul>
+{% if pinned_items %}
+<h2 class="section-title">📌 Pinned</h2>
+<div class="card-list">
+  {% for item in pinned_items %}{% include "request_card.html" %}{% endfor %}
+</div>
+{% endif %}
+
+{% if my_tasks or helping_tasks %}
+<div class="two-col home-tasks">
+  <section>
+    <h2 class="section-title">Your tasks in progress</h2>
+    <div class="mini-task-list">
+      {% for item in my_tasks %}
+      <a class="mini-task" href="/requests/{{ item.id }}">
+        <span class="status s-{{ item.status }}">{{ status_labels[item.status] }}</span>
+        <b>{{ item.title }}</b>
+        <small class="muted">{% if item.agreed_value %}{{ item.agreed_value }} credits{% else %}{{ item.requester_value }} offered{% endif %}</small>
+      </a>
+      {% else %}<p class="empty">No active requests. <a href="/new-request">Ask for help →</a></p>{% endfor %}
+    </div>
+  </section>
+  <section>
+    <h2 class="section-title">You're helping with</h2>
+    <div class="mini-task-list">
+      {% for item in helping_tasks %}
+      <a class="mini-task" href="/requests/{{ item.id }}">
+        <span class="status s-{{ item.status }}">{{ status_labels[item.status] }}</span>
+        <b>{{ item.title }}</b>
+        <small class="muted">{{ item.agreed_value or item.requester_value }} credits</small>
+      </a>
+      {% else %}<p class="empty">Not helping anyone yet. <a href="/browse">Find a neighbour →</a></p>{% endfor %}
+    </div>
+  </section>
 </div>
 {% endif %}
 

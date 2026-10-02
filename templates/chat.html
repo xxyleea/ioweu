@@ -1,43 +1,50 @@
 {% extends "base.html" %}
 {% block title %}IoU · Chat{% endblock %}
 {% block content %}
-<header class="page-head">
-  <div>
-    <a class="btn-ghost btn-back" href="/messages">← Messages</a>
-    <h1 style="margin-top:.8rem">Chat</h1>
-  </div>
-</header>
+<div class="chat-workspace">
+<aside class="chat-threads card">
+  <h3>Messages</h3>
+  {% for t in threads %}
+  <a class="ws-thread {% if t.id == item.id %}active{% endif %}" href="/chat/{{ t.id }}">
+    <b>{{ t.title }}</b>
+    <small class="muted">{{ t.requester_name }}{% if t.provider_name %} · {{ t.provider_name }}{% endif %}</small>
+    {% if t.unread_count %}<span class="thread-unread">● {{ t.unread_count }}</span>{% endif %}
+  </a>
+  {% endfor %}
+</aside>
 
+<div class="chat-main">
 <a class="chat-task-card" href="/requests/{{ item.id }}">
   <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
   <span class="tt-body">
     <span class="tt-title">{{ item.title }}</span>
-    <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %} · {{ hero.label }}</span>
+    <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>
   </span>
   <span class="tt-arrow">→</span>
 </a>
 
+{% if hero.actor == 'you' %}
+<div class="action-banner">
+  <div><b>Action required</b><p>{{ hero.label }}</p></div>
+  {% if hero.action %}
+    {% if item.status == 'agreement_pending' %}
+    <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-primary">Confirm Exchange</button></form>
+    {% elif hero.action.modal %}
+    <button class="btn-primary" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
+    {% else %}
+    <a class="btn-primary" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
+    {% endif %}
+  {% endif %}
+</div>
+{% elif hero.actor == 'other' %}
+<div class="action-banner waiting">
+  <div><b>✓ You're all set.</b><p>{{ hero.label }}</p></div>
+</div>
+{% endif %}
+
 <div class="card chat-card" id="chat-box">
   {% include "_chat_messages.html" %}
 </div>
-
-{% if item.status == 'agreement_pending' %}
-  {% if my_confirm %}
-  <div class="chat-action-card waiting">
-    <p>✅ You confirmed the exchange. Waiting for the other participant to confirm.</p>
-  </div>
-  {% else %}
-  <div class="chat-action-card">
-    <div>
-      <b>Confirm Exchange — {{ item.agreed_value }} credits</b>
-      <p class="muted">Once both sides confirm, {{ item.agreed_value }} credits move from the requester's balance into escrow and are released when the task is completed.</p>
-    </div>
-    <form method="post" action="/requests/{{ item.id }}/confirm-exchange">
-      <button class="btn-primary">Confirm Exchange</button>
-    </form>
-  </div>
-  {% endif %}
-{% endif %}
 
 <div class="chat-toolbar">
   {% if item.status in ('negotiating','agreement_pending') %}
@@ -56,13 +63,31 @@
   <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status == 'disputed' %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off" required>
   <button class="btn-primary">Send</button>
 </form>
+</div>
+
+<aside class="chat-summary card">
+  <h3>{{ item.title }}</h3>
+  <p><span class="status s-{{ item.status }}">{{ status_label }}</span></p>
+  <dl class="summary-list">
+    {% if item.agreed_value %}<div><dt>Credits</dt><dd>{{ item.agreed_value }}{% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %} · held{% elif item.status in ('completed','resolved') %} · released{% endif %}</dd></div>{% endif %}
+    {% if item.status == 'scheduled' %}<div><dt>Meeting</dt><dd>{{ item.meetup_date }} · {{ item.meetup_time }}<br>{{ item.meetup_location }}</dd></div>{% endif %}
+    <div><dt>With</dt><dd>{{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %}</dd></div>
+  </dl>
+  <div class="mini-progress">
+    {% for step in timeline_steps %}
+    <span class="mp-step {% if loop.index0 < step_index %}done{% elif loop.index0 == step_index %}current{% endif %}">{% if loop.index0 < step_index %}✓{% else %}○{% endif %} {{ step }}</span>
+    {% endfor %}
+  </div>
+  <a class="btn-ghost" href="/requests/{{ item.id }}">View full task →</a>
+</aside>
+</div>
 
 {% if item.status in ('negotiating','agreement_pending') %}
 <div class="modal" id="offer-modal" hidden>
   <div class="modal-card">
     <h2>Make an offer</h2>
     <p class="muted">Requester's offer: <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits.</p>
-    <p class="ai-suggestion"><b>✨ IoU suggested</b><span class="offer-num">{{ rec.recommended }}</span> credits <span class="muted">({{ rec.range[0] }}–{{ rec.range[1] }} range)</span></p>
+    <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ rec.recommended }}</span> credits <span class="muted">({{ rec.range[0] }}–{{ rec.range[1] }} range)</span></p>
     <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
       <input type="hidden" name="next" value="/chat/{{ item.id }}">
       <input type="hidden" name="confirm_outside_range" value="1">
@@ -99,6 +124,21 @@
 </div>
 {% endif %}
 
+{% if item.status == 'in_progress' and item.provider_id == user.id %}
+<div class="modal" id="complete-modal" hidden>
+  <div class="modal-card">
+    <h2>Mark as Complete</h2>
+    <p class="muted">{{ item.agreed_value }} credits are held in escrow and released once the owner confirms.</p>
+    <form method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete" class="modal-form">
+      <label>Completion note (optional)<textarea name="note" rows="3" placeholder="What did you do? Anything the owner should know?"></textarea></label>
+      <label>Upload evidence (optional, up to 3 files)<input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" multiple></label>
+      <label class="check-row"><input type="checkbox" name="confirm_done" value="1" required> I confirm this task has been completed.</label>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Submit Completion</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if item.status == 'disputed' %}
 <div class="modal" id="settlement-modal" hidden>
   <div class="modal-card">
@@ -118,10 +158,13 @@
 const box = document.querySelector("#chat-box");
 box.scrollTop = box.scrollHeight;
 let lastCount = box.children.length;
+const currentStatus = "{{ item.status }}";
 setInterval(async () => {
   try {
     const res = await fetch("/chat/{{ item.id }}/feed");
     if (!res.ok) return;
+    const st = res.headers.get("X-Status");
+    if (st && st !== currentStatus) { location.reload(); return; }
     const html = await res.text();
     const tmp = document.createElement("div");
     tmp.innerHTML = html;
