@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}IoU · Account{% endblock %}
+{% block content %}
+{% if saved %}<div class="success-banner"><span class="success-tick">✓</span><div><b>Profile saved.</b></div></div>{% endif %}
+<header class="page-head">
+  <div>
+    <h1>My account</h1>
+    <p class="muted">Your profile, credits and skills — edit anytime.</p>
+  </div>
+</header>
+
+<div class="account-grid">
+  <div class="card profile-card">
+    <div class="avatar avatar-big">{{ user.name[0] }}</div>
+    <h2>{{ user.name }}</h2>
+    <p class="muted">{{ user.email }}</p>
+    {% if user.community_helper %}<span class="match-badge">★ Community helper</span>{% endif %}
+    <div class="profile-stats">
+      <div><span class="stat-big">{{ user.balance }}</span><small>available</small></div>
+      <div><span class="stat-big">{{ user.held_balance }}</span><small>in escrow</small></div>
+    </div>
+    <ul class="profile-meta">
+      <li><small>Age</small><b>{{ user.age or '—' }}</b></li>
+      <li><small>District</small><b>{{ user.district or '—' }}</b></li>
+      <li><small>Address</small><b>{{ user.address or '—' }}</b></li>
+      <li><small>HKID</small><b>{{ (user.hkid[:1] ~ '•••••' ~ user.hkid[-3:]) if user.hkid else '—' }}</b></li>
+      <li><small>Birthday</small><b>{{ user.birthday or '—' }}</b></li>
+      <li><small>Language</small><b>{{ {'en':'English','yue':'粵語','zh':'普通话'}[user.language] or user.language }}</b></li>
+      <li><small>Member since</small><b>{{ user.created_at[:10] if user.created_at else 'Early member' }}</b></li>
+    </ul>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>My skillset</h2>
+      {% set skills = user.skills.split(',') if user.skills else [] %}
+      {% if skills and skills[0] %}
+      <div class="genre-row">
+        {% for skill in skills %}<span class="skill-tag">{{ skill }}</span>{% endfor %}
+      </div>
+      {% else %}<p class="empty">No skills added yet — matching tasks won't be recommended until you do.</p>{% endif %}
+      <a class="btn-ghost" href="/onboarding/skills?next=/account">Edit skills →</a>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>Edit profile</h2>
+      <form method="post" action="/account">
+        <label>Name<input name="name" value="{{ user.name }}" required></label>
+        <div class="value-form">
+          <label>District
+            <select name="district">
+              <option value="">Choose a district</option>
+              {% for d in hk_districts %}<option value="{{ d }}" {% if user.district == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+            </select>
+          </label>
+          <label>Age<input name="age" type="number" min="16" max="120" value="{{ user.age or '' }}"></label>
+        </div>
+        <label>Address<input name="address" value="{{ user.address or '' }}"></label>
+        <label>HKID<input name="hkid" value="{{ user.hkid or '' }}" placeholder="A123456(7)"></label>
+        <label>Birthday<input name="birthday" type="date" value="{{ user.birthday or '' }}"></label>
+        <label>Language
+          <select name="language">
+            <option value="en" {% if user.language == 'en' %}selected{% endif %}>English</option>
+            <option value="yue" {% if user.language == 'yue' %}selected{% endif %}>粵語</option>
+            <option value="zh" {% if user.language == 'zh' %}selected{% endif %}>普通话</option>
+          </select>
+        </label>
+        <button class="btn-primary">Save changes</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

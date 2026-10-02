@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}IoU · Help others{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Help others</h1>
+    <p class="muted">Tasks you've offered to help with — negotiate, chat, and earn credits.</p>
+  </div>
+  <a class="btn-primary" href="/browse">Find more tasks →</a>
+</header>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="all">All</button>
+  <button class="tab" data-tab="active">In progress</button>
+  <button class="tab" data-tab="done">Completed</button>
+</div>
+
+<div class="card-list" id="post-list">
+  {% for item in helping_active %}<div class="post-item" data-group="active">{% include "request_card.html" %}</div>{% endfor %}
+  {% for item in helping_done %}<div class="post-item" data-group="done">{% include "request_card.html" %}</div>{% endfor %}
+</div>
+<div class="card empty-card" id="no-posts" hidden><p class="empty">You're not helping with any tasks yet.</p><a class="btn-ghost" href="/browse">Browse the Community board →</a></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const tabs = document.querySelectorAll("#tabs .tab");
+const items = document.querySelectorAll("#post-list .post-item");
+const noPosts = document.querySelector("#no-posts");
+tabs.forEach(tab => tab.addEventListener("click", () => {
+  tabs.forEach(t => t.classList.remove("active"));
+  tab.classList.add("active");
+  const filter = tab.dataset.tab;
+  let visible = 0;
+  items.forEach(el => {
+    const show = filter === "all" || el.dataset.group === filter;
+    el.style.display = show ? "" : "none";
+    if (show) visible++;
+  });
+  noPosts.hidden = visible > 0;
+}));
+tabs[0].click();
+</script>
+{% endblock %}

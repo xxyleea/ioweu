@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}IoU · Help{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Help &amp; how it works</h1>
+    <p class="muted">The rules of the neighbourhood, in plain language.</p>
+  </div>
+</header>
+
+<div class="card help-section">
+  <h2>🧭 How IoU works</h2>
+  <ol class="steps-list">
+    <li><b>Post a task</b> — pick a genre, describe what you need, set when it's needed. IoU suggests a fair credit offer from recent similar tasks.</li>
+    <li><b>A neighbour offers to help</b> — you get a message in your shared thread.</li>
+    <li><b>Negotiate the value</b> — both sides propose a value and a buffer. If the ranges overlap, IoU settles at the middle of the overlap. IoU suggests a compromise after every round. You have 3 days before the request reopens.</li>
+    <li><b>Escrow</b> — when the task starts, the agreed credits move from the requester's balance into a held pot. Neither side can touch them.</li>
+    <li><b>Both confirm</b> — credits are released to the helper only when both sides confirm completion.</li>
+    <li><b>Kudos</b> — happy with the help? Send +10% as a thank-you.</li>
+  </ol>
+</div>
+
+<div class="card help-section">
+  <h2>📜 Community terms</h2>
+  <ul class="terms-list">
+    <li>Credits are a record of favours, not money. They can't be bought, sold or cashed out.</li>
+    <li>Your balance can go as low as <b>-20 credits</b> — that's the community trusting you to give back.</li>
+    <li>One hour of your time is worth what the two of you agree it's worth. Negotiate fairly.</li>
+    <li>Your HKID is only used to verify residency and is never shown to other users.</li>
+    <li>Be honest in disputes: moderators can refund credits and repeated abuse gets you removed.</li>
+    <li>Meet in safe, public places when possible. IoU connects neighbours — it can't supervise them.</li>
+  </ul>
+</div>
+
+<div class="card help-section">
+  <h2>❓ Frequently asked questions</h2>
+  <details><summary>What if we can't agree on a value?</summary><p>After 3 days without an overlap, the helper is released and your request goes back to the open board — no hard feelings, no credits moved.</p></details>
+  <details><summary>Where do my first credits come from?</summary><p>Everyone starts with 10 welcome credits. After that, you earn by helping others — or spend into the -20 floor while you find your feet.</p></details>
+  <details><summary>What happens if the task goes wrong?</summary><p>Within 3 days of completion, the requester can open a dispute with evidence. You can negotiate a refund between yourselves first; if that fails, a moderator decides.</p></details>
+  <details><summary>How is the suggested offer calculated?</summary><p>From the median value of similar completed tasks in the last 90 days, adjusted for estimated effort, complexity and past quality. It's advice, not a rule — but posting far outside it needs a confirmation.</p></details>
+  <details><summary>Can I change my skills or address later?</summary><p>Yes — everything lives on your Account page. Better skills info means better ★ For you recommendations on the Community board.</p></details>
+</div>
+{% endblock %}

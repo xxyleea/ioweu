@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}IoU · Messages{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Messages</h1>
+    <p class="muted">Offers, negotiation updates and chats for your exchanges.</p>
+  </div>
+</header>
+
+<div class="card-list">
+{% for t in threads %}
+  <a class="card thread-card" href="/chat/{{ t.id }}">
+    <div class="avatar">{{ (t.provider_name or t.requester_name)[0] }}</div>
+    <div class="thread-meta">
+      <b>{{ t.title }}</b>
+      <small class="muted">{{ t.requester_name }}{% if t.provider_name %} · {{ t.provider_name }}{% endif %}</small>
+      <p class="thread-preview">{{ t.last_body }}</p>
+    </div>
+    <div class="thread-side">
+      <span class="status s-{{ t.status }}">{{ t.status.replace('_',' ') }}</span>
+      <small class="muted">{{ t.last_at[:16].replace('T',' ') }}</small>
+    </div>
+  </a>
+{% else %}
+  <div class="card empty-card"><p class="empty">No conversations yet. Offer to help someone on the Community board and your thread appears here.</p><a class="btn-ghost" href="/browse">Go to Community →</a></div>
+{% endfor %}
+</div>
+{% endblock %}

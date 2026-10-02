@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU — Your skills</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/style.css"></head>
+<body class="auth-body">
+<main class="auth-card wizard-card skill-picker-card">
+  <div class="auth-brand"><span class="brand-dot"></span>IoU</div>
+  <form method="post" action="/onboarding/skills">
+    <input type="hidden" name="next" value="{{ next }}">
+
+    <div class="wizard-step active" data-step="0">
+      <h1>What can you offer?</h1>
+      <p class="muted">Pick the big topics first — we'll go into details next.</p>
+      <div class="topic-grid">
+        {% for genre, subs in skill_tree.items() %}
+        <button type="button" class="topic-card cat-{{ genre|slug }}" data-genre="{{ genre }}"><span class="topic-emoji">{{ genre_emoji[genre] }}</span><b>{{ genre|title }}</b></button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="1">
+      <h1>Pick your skills</h1>
+      <p class="muted">Choose everything you're comfortable offering. We'll recommend matching tasks.</p>
+      {% for genre, subs in skill_tree.items() %}
+      <div class="skill-section cat-{{ genre|slug }}" data-genre="{{ genre }}" hidden>
+        <p class="field-label">{{ genre_emoji[genre] }} {{ genre|title }}</p>
+        <div class="genre-row">
+          {% for skill in subs %}
+          <label class="genre-chip"><input type="checkbox" name="skills" value="{{ skill }}" {% if skill in selected_skills %}checked{% endif %}><span>{{ skill }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+      <p class="empty" id="no-topics" hidden>Go back and pick at least one topic — or skip for now.</p>
+    </div>
+
+    <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span></div>
+    <div class="wizard-nav">
+      <button type="button" class="btn-ghost" id="back-btn" hidden>← Topics</button>
+      <button type="button" class="btn-primary" id="next-btn">Next →</button>
+      <button type="submit" class="btn-primary" id="submit-btn" hidden>Save my skills →</button>
+    </div>
+  </form>
+  <p class="hint" style="text-align:center;margin-top:1rem"><a href="{{ next }}">Skip for now — finish later</a></p>
+</main>
+<script>
+const steps = [...document.querySelectorAll(".wizard-step")];
+const dots = [...document.querySelectorAll(".wizard-dots .dot")];
+const backBtn = document.querySelector("#back-btn");
+const nextBtn = document.querySelector("#next-btn");
+const submitBtn = document.querySelector("#submit-btn");
+const topicCards = [...document.querySelectorAll(".topic-card")];
+const sections = [...document.querySelectorAll(".skill-section")];
+const noTopics = document.querySelector("#no-topics");
+function show(i) {
+  steps.forEach((s, idx) => s.classList.toggle("active", idx === i));
+  dots.forEach((d, idx) => d.classList.toggle("active", idx === i));
+  backBtn.hidden = i === 0;
+  nextBtn.hidden = i === 1;
+  submitBtn.hidden = i !== 1;
+}
+topicCards.forEach(card => card.addEventListener("click", () => card.classList.toggle("selected")));
+nextBtn.addEventListener("click", () => {
+  const chosen = new Set(topicCards.filter(c => c.classList.contains("selected")).map(c => c.dataset.genre));
+  sections.forEach(s => s.hidden = !chosen.has(s.dataset.genre));
+  noTopics.hidden = chosen.size > 0;
+  show(1);
+});
+backBtn.addEventListener("click", () => show(0));
+</script>
+</body></html>

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU — Join</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/style.css"></head>
+<body class="auth-body">
+<main class="auth-card wizard-card skill-picker-card">
+  <div class="auth-brand"><span class="brand-dot"></span>IoU</div>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="post" action="/register" id="reg-form" novalidate>
+
+    <div class="wizard-step active" data-step="0">
+      <h1>Choose your language</h1>
+      <p class="muted">選擇語言 · 选择语言</p>
+      <div class="choice-col">
+        <label class="choice-card"><input type="radio" name="language" value="en" checked><span><b>English</b><small>Default</small></span></label>
+        <label class="choice-card"><input type="radio" name="language" value="yue"><span><b>粵語</b><small>Cantonese</small></span></label>
+        <label class="choice-card"><input type="radio" name="language" value="zh"><span><b>普通话</b><small>Mandarin</small></span></label>
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="1">
+      <h1>Create your account</h1>
+      <p class="muted">Your login for the neighbourhood ledger.</p>
+      <label>Name<input id="reg-name" name="name" placeholder="Your name"></label>
+      <label>Email<input id="reg-email" name="email" type="email" placeholder="you@example.com"></label>
+      <label>Password<input id="reg-password" name="password" type="password" placeholder="At least 6 characters"></label>
+    </div>
+
+    <div class="wizard-step" data-step="2">
+      <h1>Where do you live?</h1>
+      <p class="muted">So neighbours can find tasks near them.</p>
+      <label>Region
+        <select id="reg-region"><option value="">Choose a region</option>{% for region in hk_regions %}<option value="{{ region }}">{{ region }}</option>{% endfor %}</select>
+      </label>
+      <label>District
+        <select id="reg-district" name="district" disabled><option value="">Pick a region first</option></select>
+      </label>
+      <label>Detailed address<input id="reg-address" name="address" placeholder="e.g. Block B, 12 Smithfield Road"></label>
+    </div>
+
+    <div class="wizard-step" data-step="3">
+      <h1>Your HKID</h1>
+      <p class="muted">Used once to verify you're a real Hong Kong resident. It's never shown to other users.</p>
+      <label>HKID<input id="reg-hkid" name="hkid" placeholder="e.g. A123456(7)"></label>
+    </div>
+
+    <div class="wizard-step" data-step="4">
+      <h1>When were you born?</h1>
+      <p class="muted">Scroll to pick your birthday.</p>
+      <div class="picker">
+        <div class="picker-col" id="picker-year"></div>
+        <div class="picker-col" id="picker-month"></div>
+        <div class="picker-col" id="picker-day"></div>
+      </div>
+      <input type="hidden" name="birthday" id="birthday" value="2000-01-01">
+    </div>
+
+    <div class="wizard-step" data-step="5">
+      <h1>What can you offer?</h1>
+      <p class="muted">Pick the big topics first — we'll go into details next.</p>
+      <div class="topic-grid">
+        {% for genre, subs in skill_tree.items() %}
+        <button type="button" class="topic-card cat-{{ genre|slug }}" data-genre="{{ genre }}"><span class="topic-emoji">{{ genre_emoji[genre] }}</span><b>{{ genre|title }}</b></button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="6">
+      <h1>Pick your skills</h1>
+      <p class="muted">Choose everything you're comfortable offering.</p>
+      {% for genre, subs in skill_tree.items() %}
+      <div class="skill-section cat-{{ genre|slug }}" data-genre="{{ genre }}" hidden>
+        <p class="field-label">{{ genre_emoji[genre] }} {{ genre|title }}</p>
+        <div class="genre-row">
+          {% for skill in subs %}
+          <label class="genre-chip"><input type="checkbox" name="skills" value="{{ skill }}"><span>{{ skill }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+      <p class="empty" id="no-topics" hidden>Go back and pick at least one topic — or just join and do it later.</p>
+    </div>
+
+    <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    <div class="wizard-nav">
+      <button type="button" class="btn-ghost" id="back-btn" hidden>← Back</button>
+      <button type="button" class="btn-primary" id="next-btn">Next →</button>
+      <button type="submit" class="btn-primary" id="submit-btn" hidden>Join IoU →</button>
+    </div>
+  </form>
+  <p class="hint" style="text-align:center;margin-top:.6rem">Already have an account? <a href="/login">Sign in</a></p>
+</main>
+<div class="spinner-overlay" id="spinner" hidden>
+  <div class="spinner"></div>
+  <p><b>Creating your account…</b></p>
+</div>
+<script>
+const steps = [...document.querySelectorAll(".wizard-step")];
+const dots = [...document.querySelectorAll(".wizard-dots .dot")];
+const backBtn = document.querySelector("#back-btn");
+const nextBtn = document.querySelector("#next-btn");
+const submitBtn = document.querySelector("#submit-btn");
+let current = 0;
+function show(i) {
+  current = i;
+  steps.forEach((s, idx) => s.classList.toggle("active", idx === i));
+  dots.forEach((d, idx) => d.classList.toggle("active", idx === i));
+  backBtn.hidden = i === 0;
+  nextBtn.hidden = i === steps.length - 1;
+  submitBtn.hidden = i !== steps.length - 1;
+  if (i === 6) {
+    const chosen = new Set(topicCards.filter(c => c.classList.contains("selected")).map(c => c.dataset.genre));
+    sections.forEach(s => s.hidden = !chosen.has(s.dataset.genre));
+    document.querySelector("#no-topics").hidden = chosen.size > 0;
+  }
+}
+function markInvalid(el) {
+  el.style.outline = "2px solid #c0392b";
+  el.focus();
+  setTimeout(() => el.style.outline = "", 1500);
+}
+function validStep(i) {
+  if (i === 1) {
+    for (const sel of ["#reg-name", "#reg-email", "#reg-password"]) {
+      const el = document.querySelector(sel);
+      if (!el.value.trim()) { markInvalid(el); return false; }
+    }
+    if (document.querySelector("#reg-password").value.length < 6) { alert("Password needs at least 6 characters."); return false; }
+  }
+  if (i === 2) {
+    if (!document.querySelector("#reg-district").value) { markInvalid(document.querySelector("#reg-region")); return false; }
+    if (!document.querySelector("#reg-address").value.trim()) { markInvalid(document.querySelector("#reg-address")); return false; }
+  }
+  if (i === 3 && !document.querySelector("#reg-hkid").value.trim()) { markInvalid(document.querySelector("#reg-hkid")); return false; }
+  return true;
+}
+nextBtn.addEventListener("click", () => { if (validStep(current)) show(current + 1); });
+backBtn.addEventListener("click", () => show(current - 1));
+
+/* region -> district */
+const HK_REGIONS = {{ hk_regions|tojson }};
+const regionSel = document.querySelector("#reg-region");
+const districtSel = document.querySelector("#reg-district");
+regionSel.addEventListener("change", () => {
+  const districts = HK_REGIONS[regionSel.value] || [];
+  districtSel.innerHTML = '<option value="">Choose a district</option>' +
+    districts.map(d => `<option value="${d}">${d}</option>`).join("");
+  districtSel.disabled = districts.length === 0;
+});
+
+/* skill topics */
+const topicCards = [...document.querySelectorAll(".topic-card")];
+const sections = [...document.querySelectorAll(".skill-section")];
+topicCards.forEach(card => card.addEventListener("click", () => card.classList.toggle("selected")));
+
+/* birthday wheel picker */
+const ITEM_H = 44;
+const birthdayInput = document.querySelector("#birthday");
+const state = { year: 2000, month: 1, day: 1 };
+function daysInMonth(y, m) { return new Date(y, m, 0).getDate(); }
+function buildWheel(el, items, selected, onPick) {
+  el.innerHTML = '<div class="picker-pad"></div>' + items.map((v, i) =>
+    `<div class="picker-item${i === selected ? " selected" : ""}" data-i="${i}">${v.label}</div>`).join("") +
+    '<div class="picker-pad"></div>';
+  el.scrollTop = selected * ITEM_H;
+  let timer;
+  el.onscroll = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const idx = Math.max(0, Math.min(items.length - 1, Math.round(el.scrollTop / ITEM_H)));
+      el.scrollTo({ top: idx * ITEM_H, behavior: "smooth" });
+      el.querySelectorAll(".picker-item").forEach(it => it.classList.toggle("selected", Number(it.dataset.i) === idx));
+      onPick(items[idx].value);
+    }, 80);
+  };
+  el.querySelectorAll(".picker-item").forEach(it => it.addEventListener("click", () => {
+    el.scrollTo({ top: Number(it.dataset.i) * ITEM_H, behavior: "smooth" });
+  }));
+}
+function syncBirthday() {
+  birthdayInput.value = `${state.year}-${String(state.month).padStart(2, "0")}-${String(state.day).padStart(2, "0")}`;
+}
+const yearCol = document.querySelector("#picker-year");
+const monthCol = document.querySelector("#picker-month");
+const dayCol = document.querySelector("#picker-day");
+const years = [];
+for (let y = 1930; y <= 2012; y++) years.push({ value: y, label: y });
+const months = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: String(i + 1).padStart(2, "0") }));
+function dayItems() {
+  return Array.from({ length: daysInMonth(state.year, state.month) }, (_, i) => ({ value: i + 1, label: String(i + 1).padStart(2, "0") }));
+}
+function renderDays() {
+  const items = dayItems();
+  if (state.day > items.length) state.day = items.length;
+  buildWheel(dayCol, items, state.day - 1, v => { state.day = v; syncBirthday(); });
+}
+buildWheel(yearCol, years, 70, v => { state.year = v; renderDays(); syncBirthday(); });
+buildWheel(monthCol, months, 0, v => { state.month = v; renderDays(); syncBirthday(); });
+renderDays();
+syncBirthday();
+
+/* loading on submit */
+document.querySelector("#reg-form").addEventListener("submit", () => {
+  document.querySelector("#spinner").hidden = false;
+});
+</script>
+</body></html>

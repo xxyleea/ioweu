@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}IoU · Chat{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <a class="btn-ghost btn-back" href="/messages">← Messages</a>
+    <h1 style="margin-top:.8rem">{{ item.title }}</h1>
+    <p class="muted">{{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %} · <span class="status s-{{ item.status }}">{{ item.status.replace('_',' ') }}</span></p>
+  </div>
+  <a class="btn-ghost" href="/requests/{{ item.id }}">View task →</a>
+</header>
+
+<div class="card chat-card" id="chat-box">
+  {% for m in messages %}
+    {% if m.kind == 'system' %}
+      <p class="chat-system">{{ m.body }}</p>
+    {% elif m.kind == 'offer' %}
+      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-bubble offer-bubble"><small>{{ m.sender_name }}</small><b>{{ m.body }}</b></div>
+      </div>
+    {% else %}
+      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-bubble"><small>{{ m.sender_name }}</small>{{ m.body }}</div>
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="empty">No messages yet — say hi and arrange the details.</p>
+  {% endfor %}
+</div>
+
+<form class="chat-input" method="post" action="/chat/{{ item.id }}">
+  <input name="body" placeholder="Arrange the meetup, ask a question…" autocomplete="off" required>
+  <button class="btn-primary">Send</button>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+const box = document.querySelector("#chat-box");
+box.scrollTop = box.scrollHeight;
+</script>
+{% endblock %}

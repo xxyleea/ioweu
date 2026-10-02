@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}IoU · {{ item.title }}{% endblock %}
+{% block content %}
+{% set next = '/requests/' ~ item.id %}
+<header class="page-head">
+  <div>
+    <a class="btn-ghost btn-back" href="javascript:history.back()">← Back</a>
+    <h1 style="margin-top:.8rem">{{ genre_emoji[item.category] if item.category in genre_emoji }} {{ item.title }}</h1>
+    <p class="muted">{{ item.category }} · requested by {{ item.requester_name }}{% if item.location %} · 📍 {{ item.location }}{% endif %}{% if item.needed_by %} · ⏰ needed by {{ item.needed_by }}{% endif %}</p>
+  </div>
+  {% if message_count and (item.requester_id == user.id or item.provider_id == user.id) %}
+  <a class="btn-primary" href="/chat/{{ item.id }}">💬 Messages ({{ message_count }})</a>
+  {% endif %}
+</header>
+
+<div class="detail-layout">
+  <div>
+    {% include "request_card.html" %}
+  </div>
+  <aside class="card how-card detail-side">
+    <h2>How this exchange works</h2>
+    <ol class="steps-list">
+      <li><b>Offer to help</b> — the requester is notified in your shared thread.</li>
+      <li><b>Negotiate</b> — both sides propose a value ± buffer; IoU suggests a fair compromise after each round.</li>
+      <li><b>Escrow</b> — credits are held while the task runs.</li>
+      <li><b>Confirm together</b> — credits move only when both sides confirm.</li>
+    </ol>
+    {% if item.requester_id == user.id or item.provider_id == user.id %}
+    <a class="btn-ghost" href="/chat/{{ item.id }}">Open your chat thread →</a>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

@@ -1,23 +1,35 @@
 {% extends "base.html" %}
-{% block title %}IoU · Browse{% endblock %}
+{% block title %}IoU · Community{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
-    <h1>Neighbourhood board</h1>
-    <p class="muted">Open requests from other residents. Offer to help, agree a fair value, earn credits.</p>
+    <h1>Community board</h1>
+    <p class="muted">{% if matched_genres %}Tasks matching your skills are starred ★ and listed first. Click any task to see details and offer help.{% else %}Open requests from other residents. <a href="/onboarding/skills?next=/browse">Add your skills</a> to get recommendations.{% endif %}</p>
   </div>
 </header>
 
-<div class="filter-row" id="filter-row">
-  <button class="filter-chip active" data-filter="all">All</button>
-  {% for category in task_categories %}
-  <button class="filter-chip cat-{{ category.replace(' ', '-') }}" data-filter="{{ category }}">{{ category|title }}</button>
-  {% endfor %}
+<div class="board-controls">
+  <div class="filter-row" id="filter-row">
+    <button class="filter-chip active" data-filter="all">All</button>
+    {% for category in task_categories %}
+    <button class="filter-chip cat-{{ category|slug }}" data-filter="{{ category }}">{{ genre_emoji[category] }} {{ category|title }}</button>
+    {% endfor %}
+  </div>
+  <label class="sort-label">Sort
+    <select id="sort-select">
+      <option value="match">For you</option>
+      <option value="near">Distance</option>
+      <option value="credits-desc">Credits · high to low</option>
+      <option value="credits-asc">Credits · low to high</option>
+      <option value="time-asc">Time needed · short first</option>
+      <option value="time-desc">Time needed · long first</option>
+    </select>
+  </label>
 </div>
 
 <div class="card-grid" id="board">
 {% for item in community_requests %}
-  <div class="grid-item" data-category="{{ item.category }}">{% include "request_card.html" %}</div>
+  <div class="grid-item" data-category="{{ item.category }}" data-credits="{{ item.requester_value }}" data-effort="{{ item.effort_minutes or 30 }}" data-near="{{ 1 if item.location and user_district and item.location.strip().lower() == user_district else 0 }}" data-match="{{ 1 if item.id in matched_ids else 0 }}">{% include "request_card.html" %}</div>
 {% else %}
   <div class="card empty-card"><p class="empty">No open requests from other residents right now. Check back soon.</p></div>
 {% endfor %}
@@ -26,14 +38,33 @@
 {% block scripts %}
 <script>
 const chips = document.querySelectorAll(".filter-chip");
-const items = document.querySelectorAll("#board .grid-item");
+const board = document.querySelector("#board");
+const sortSelect = document.querySelector("#sort-select");
+function items() { return [...board.querySelectorAll(".grid-item")]; }
+function applyFilter(filter) {
+  items().forEach(el => {
+    el.style.display = (filter === "all" || el.dataset.category === filter) ? "" : "none";
+  });
+}
+function applySort(key) {
+  const sorted = items().sort((a, b) => {
+    const d = (k) => Number(b.dataset[k]) - Number(a.dataset[k]);
+    if (key === "match") return d("match") || d("near") || d("credits");
+    if (key === "near") return d("near") || d("credits");
+    if (key === "credits-desc") return d("credits");
+    if (key === "credits-asc") return -d("credits");
+    if (key === "time-asc") return -d("effort");
+    if (key === "time-desc") return d("effort");
+    return 0;
+  });
+  sorted.forEach(el => board.appendChild(el));
+}
 chips.forEach(chip => chip.addEventListener("click", () => {
   chips.forEach(c => c.classList.remove("active"));
   chip.classList.add("active");
-  const filter = chip.dataset.filter;
-  items.forEach(el => {
-    el.style.display = (filter === "all" || el.dataset.category === filter) ? "" : "none";
-  });
+  applyFilter(chip.dataset.filter);
 }));
+sortSelect.addEventListener("change", () => applySort(sortSelect.value));
+applySort("match");
 </script>
 {% endblock %}

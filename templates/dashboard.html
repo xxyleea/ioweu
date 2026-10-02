@@ -32,27 +32,20 @@
   </div>
 </section>
 
-<h2 class="section-title">Your active exchanges</h2>
-<div class="card-list">
-{% for item in active_items %}{% include "request_card.html" %}{% else %}
-  <div class="card empty-card"><p class="empty">Nothing in flight right now.</p><a class="btn-ghost" href="/browse">Find someone to help →</a></div>
-{% endfor %}
+<div class="quick-actions">
+  <a class="btn-primary" href="/new-request">+ Ask for help</a>
+  <a class="btn-ghost" href="/browse">Help a neighbour →</a>
+  <a class="btn-ghost" href="/my-posts">Track my posts →</a>
 </div>
 
-<div class="two-col">
-  <div class="card">
-    <h2>Credit activity</h2>
-    <ul class="ledger-list">
-    {% for item in ledger[:8] %}
-      <li><span class="ledger-amount {% if item.amount > 0 %}pos{% else %}neg{% endif %}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</span><div><b>{{ item.kind.replace('_',' ') }}</b>{% if item.title %} · {{ item.title }}{% endif %}<br><small>{{ item.description }}</small></div></li>
-    {% else %}<li class="empty">No ledger activity yet.</li>{% endfor %}
-    </ul>
-  </div>
-  <div class="card how-card">
-    <h2>How value works</h2>
-    <p>Both sides submit a value and a buffer. If the ranges overlap, IoU proposes the middle of the overlap. Otherwise you have 3 days to compromise before the request reopens.</p>
-    <p>Credits are held in escrow while a task runs, and only move when both sides confirm completion.</p>
-  </div>
+<div class="card" style="margin-top:1.6rem">
+  <h2>Credit activity</h2>
+  <ul class="ledger-list">
+  {% for item in ledger[:6] %}
+    <li><span class="ledger-amount {% if item.amount > 0 %}pos{% else %}neg{% endif %}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</span><div><b>{{ item.kind.replace('_',' ') }}</b>{% if item.title %} · {{ item.title }}{% endif %}<br><small>{{ item.description }}</small></div></li>
+  {% else %}<li class="empty">No ledger activity yet.</li>{% endfor %}
+  </ul>
+  <a class="btn-ghost" href="/help">How IoU works →</a>
 </div>
 
 {% if user.is_moderator %}

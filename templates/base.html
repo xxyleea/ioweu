@@ -6,8 +6,12 @@
   <p class="brand-tag">Small favours,<br>fair credit.</p>
   <div class="nav-links">
     <a class="nav-link {% if page == 'home' %}active{% endif %}" href="/"><span class="nav-ico">⌂</span>Home</a>
-    <a class="nav-link {% if page == 'posts' %}active{% endif %}" href="/my-posts"><span class="nav-ico">✎</span>My posts</a>
-    <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Browse</a>
+    <a class="nav-link {% if page == 'posts' %}active{% endif %}" href="/my-posts"><span class="nav-ico">✎</span>Get help</a>
+    <a class="nav-link {% if page == 'helping' %}active{% endif %}" href="/helping"><span class="nav-ico">♥</span>Help others</a>
+    <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Community</a>
+    <a class="nav-link {% if page == 'messages' %}active{% endif %}" href="/messages"><span class="nav-ico">✉</span>Messages</a>
+    <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help"><span class="nav-ico">?</span>Help</a>
+    <a class="nav-link {% if page == 'account' %}active{% endif %}" href="/account"><span class="nav-ico">☺</span>Account</a>
   </div>
   <div class="sidebar-user">
     <div class="avatar">{{ user.name[0] }}</div>

@@ -6,18 +6,18 @@ from app import db, init_db
 
 
 SAMPLES = [
-    ("errands", "Grocery pickup", 30, 3, 3, 4),
-    ("errands", "Prescription pickup", 20, 2, 4, 3),
-    ("errands", "Grocery pickup", 45, 3, 5, 5),
-    ("errands", "Parcel collection", 25, 2, 4, 4),
-    ("childcare", "School pickup", 60, 4, 4, 8),
-    ("childcare", "After-school supervision", 90, 4, 5, 11),
-    ("childcare", "Playtime supervision", 45, 3, 3, 6),
-    ("tech help", "Set up printer", 40, 3, 4, 5),
-    ("tech help", "Phone troubleshooting", 60, 4, 4, 8),
-    ("tech help", "Laptop setup", 120, 5, 5, 16),
-    ("home", "Water plants", 20, 1, 5, 3),
-    ("home", "Assemble shelf", 75, 4, 4, 10),
+    ("daily life", "Grocery pickup", 30, 3, 3, 4),
+    ("daily life", "Prescription pickup", 20, 2, 4, 3),
+    ("daily life", "Grocery pickup", 45, 3, 5, 5),
+    ("daily life", "Parcel collection", 25, 2, 4, 4),
+    ("family & kids", "School pickup", 60, 4, 4, 8),
+    ("family & kids", "After-school supervision", 90, 4, 5, 11),
+    ("family & kids", "Playtime supervision", 45, 3, 3, 6),
+    ("technology", "Set up printer", 40, 3, 4, 5),
+    ("technology", "Phone troubleshooting", 60, 4, 4, 8),
+    ("technology", "Laptop setup", 120, 5, 5, 16),
+    ("repair & diy", "Water plants", 20, 1, 5, 3),
+    ("repair & diy", "Assemble shelf", 75, 4, 4, 10),
 ]
 
 

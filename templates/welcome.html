@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU — Welcome</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/style.css"></head>
+<body class="auth-body">
+<main class="auth-card wizard-card welcome-card">
+  <div id="welcome-loading" class="welcome-loading">
+    <div class="spinner"></div>
+    <p class="muted">Setting up your account…</p>
+  </div>
+  <div id="welcome-ready" hidden>
+    <div class="welcome-emoji">🎉</div>
+    <h1>Welcome to the community, {{ user.name.split(' ')[0] }}!</h1>
+    <p class="muted">Your account is ready and <b>10 welcome credits</b> are already in your balance.</p>
+    <p class="muted"><small>Taking you to the neighbourhood board…</small></p>
+    <a class="btn-primary btn-wide" href="/browse">Next →</a>
+  </div>
+</main>
+<script>
+setTimeout(() => {
+  document.querySelector("#welcome-loading").hidden = true;
+  document.querySelector("#welcome-ready").hidden = false;
+  setTimeout(() => { window.location.href = "/browse"; }, 2000);
+}, 2000);
+</script>
+</body></html>

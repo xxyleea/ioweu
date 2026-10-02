@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU — Community test</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/style.css"></head>
+<body class="auth-body">
+<main class="auth-card wizard-card">
+  <div class="auth-brand"><span class="brand-dot"></span>IoU</div>
+  <h1>Fairness check</h1>
+  <p class="muted">Three quick situations. There are no wrong answers — we just want to know how you'd judge.</p>
+  <form method="post" action="/community-test">
+    <div class="quiz-q">
+      <p><b>1.</b> An hour of babysitting and an hour of math tutoring are both worth the same credits. Fair?</p>
+      <label class="choice-inline"><input type="radio" name="q1" value="yes" required> Fair — an hour is an hour</label>
+      <label class="choice-inline"><input type="radio" name="q1" value="no"> Not always — skill should count</label>
+    </div>
+    <div class="quiz-q">
+      <p><b>2.</b> A neighbour cancels after you've already arrived. Should they still pay some credits?</p>
+      <label class="choice-inline"><input type="radio" name="q2" value="yes" required> Yes — my time was spent</label>
+      <label class="choice-inline"><input type="radio" name="q2" value="no"> No — no task, no credits</label>
+    </div>
+    <div class="quiz-q">
+      <p><b>3.</b> You finish a task much faster than estimated. Do you still deserve the full agreed credits?</p>
+      <label class="choice-inline"><input type="radio" name="q3" value="yes" required> Yes — a deal is a deal</label>
+      <label class="choice-inline"><input type="radio" name="q3" value="no"> No — renegotiate downwards</label>
+    </div>
+    <button class="btn-primary btn-wide">Submit & earn +5 credits →</button>
+  </form>
+  <p class="hint" style="text-align:center;margin-top:1rem"><a href="/browse">Maybe later — take me to the board</a></p>
+</main>
+</body></html>

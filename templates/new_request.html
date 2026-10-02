@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}IoU · New task{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Create a new task</h1>
+    <p class="muted">Four quick steps and your neighbours can see it.</p>
+  </div>
+</header>
+
+<form class="card wizard-wide" method="post" action="/requests" id="task-form" novalidate>
+  <input type="hidden" name="confirm_outside_range" id="confirm-range" value="">
+
+  <div class="wizard-step active" data-step="0">
+    <h2>What kind of task is it?</h2>
+    <div class="genre-row genre-big">
+      {% for category in task_categories %}
+      <label class="genre-chip cat-{{ category|slug }}"><input type="radio" name="category" value="{{ category }}"><span>{{ genre_emoji[category] }} {{ category|title }}</span></label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="wizard-step" data-step="1">
+    <h2>Task details</h2>
+    <label>Task title<input id="new-title" name="title" placeholder="e.g. Help me assemble a bookshelf"></label>
+    <label>Details<textarea id="new-description" name="description" placeholder="What needs doing, any tools needed, anything the helper should know"></textarea></label>
+    <label>Where is the task?</label>
+    <div class="addr-wrap">
+      <input id="new-location" name="location" placeholder="e.g. Kennedy Town" autocomplete="off">
+      {% if user.district %}
+      <div class="addr-suggest" id="addr-suggest" hidden>
+        <b>📍 Use my address</b><br><small>{{ user.district }}{{ ' · ' if user.address }}{{ user.address }}</small>
+      </div>
+      {% endif %}
+    </div>
+    <div class="value-form">
+      <label>Needed by<input id="needed-by" name="needed_by" type="date"></label>
+      <div class="urgency-preview"><span class="field-label">Urgency (auto)</span><br><span class="urgency" id="urgency-badge" hidden></span><small class="muted" id="urgency-hint">Pick a date above</small></div>
+    </div>
+    <input type="hidden" name="urgency" id="urgency-value" value="">
+  </div>
+
+  <div class="wizard-step" data-step="2">
+    <h2>IoU's suggested offer</h2>
+    <div class="ai-suggestion ai-big">
+      <b>Based on recent similar tasks</b>
+      <div class="ai-nums"><output id="new-recommendation">…</output><span id="new-range"></span></div>
+      <small>Calculated from the category, your description, estimated effort and complexity.</small>
+    </div>
+    <div class="value-form">
+      <label>Your offer<input id="new-offered-value" type="number" name="offered_value" min="1" placeholder="Credits"></label>
+      <label>Offer buffer ±<input type="number" id="new-buffer" name="offered_buffer" min="0" value="2"></label>
+    </div>
+  </div>
+
+  <div class="wizard-step" data-step="3">
+    <h2>Preview your task</h2>
+    <p class="muted">This is exactly what neighbours will see on the board.</p>
+    <article class="card request-card" id="preview-card">
+      <div class="row"><div class="card-head"><span class="cat-dot" id="pv-dot"></span><small class="cat-name" id="pv-cat"></small><h2 id="pv-title"></h2><p id="pv-desc"></p><small class="muted" id="pv-meta"></small></div><span class="status s-open">open</span></div>
+      <p class="offer"><b>Your offer</b><span class="offer-num" id="pv-offer"></span> credits</p>
+      <p class="ai-suggestion"><b>IoU recommendation</b><span class="offer-num" id="pv-rec"></span> credits <span id="pv-recrec"></span></p>
+    </article>
+    <div class="range-warning" id="range-warning" hidden>
+      <b>Your offer is outside the recommended range.</b>
+      <label class="warning-confirm"><input type="checkbox" id="range-check"> I understand and want to post it anyway.</label>
+    </div>
+  </div>
+
+  <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+  <div class="wizard-nav">
+    <a class="btn-ghost" href="/my-posts" id="cancel-link">Cancel</a>
+    <button type="button" class="btn-ghost" id="back-btn" hidden>← Back</button>
+    <button type="button" class="btn-primary" id="next-btn">Next →</button>
+    <button type="submit" class="btn-primary" id="submit-btn" hidden>Post task →</button>
+  </div>
+</form>
+
+<div class="spinner-overlay" id="spinner" hidden>
+  <div class="spinner"></div>
+  <p><b>Posting your task…</b></p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const steps = [...document.querySelectorAll(".wizard-step")];
+const dots = [...document.querySelectorAll(".wizard-dots .dot")];
+const backBtn = document.querySelector("#back-btn");
+const nextBtn = document.querySelector("#next-btn");
+const submitBtn = document.querySelector("#submit-btn");
+const cancelLink = document.querySelector("#cancel-link");
+const title = document.querySelector("#new-title");
+const description = document.querySelector("#new-description");
+const recommendation = document.querySelector("#new-recommendation");
+const range = document.querySelector("#new-range");
+const offer = document.querySelector("#new-offered-value");
+const buffer = document.querySelector("#new-buffer");
+const locationInput = document.querySelector("#new-location");
+const addrSuggest = document.querySelector("#addr-suggest");
+const neededBy = document.querySelector("#needed-by");
+const urgencyValue = document.querySelector("#urgency-value");
+const urgencyBadge = document.querySelector("#urgency-badge");
+const urgencyHint = document.querySelector("#urgency-hint");
+const myAddress = {{ (user.district or user.address_id or '')|tojson }};
+let current = 0;
+let recData = null;
+const catEmoji = {{ genre_emoji|tojson }};
+
+function chosenCategory() {
+  const checked = document.querySelector("input[name=category]:checked");
+  return checked ? checked.value : "";
+}
+function chosenLocation() {
+  return locationInput.value.trim();
+}
+function computeUrgency() {
+  if (!neededBy.value) {
+    urgencyValue.value = "";
+    urgencyBadge.hidden = true;
+    urgencyHint.hidden = false;
+    return;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(neededBy.value + "T00:00:00");
+  const days = Math.round((target - today) / 86400000);
+  let value, label, cls;
+  if (days <= 3) { value = "urgent"; label = "⚡ Urgent · within 3 days"; cls = "urgency urgency-urgent"; }
+  else if (days <= 7) { value = "soon"; label = "Soon · within a week"; cls = "urgency urgency-soon"; }
+  else { value = "low"; label = "Low · within a month"; cls = "urgency urgency-low"; }
+  urgencyValue.value = value;
+  urgencyBadge.textContent = label;
+  urgencyBadge.className = cls;
+  urgencyBadge.hidden = false;
+  urgencyHint.hidden = true;
+}
+if (addrSuggest) {
+  locationInput.addEventListener("focus", () => { addrSuggest.hidden = false; });
+  locationInput.addEventListener("blur", () => { setTimeout(() => addrSuggest.hidden = true, 150); });
+  addrSuggest.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    locationInput.value = myAddress;
+    addrSuggest.hidden = true;
+  });
+}
+neededBy.min = new Date().toISOString().split("T")[0];
+neededBy.addEventListener("change", computeUrgency);
+async function updateRecommendation() {
+  const category = chosenCategory();
+  if (!category) return;
+  const query = new URLSearchParams({title: title.value, description: description.value});
+  const response = await fetch("/estimate/" + encodeURIComponent(category) + "?" + query);
+  if (!response.ok) return;
+  recData = await response.json();
+  recommendation.textContent = recData.recommended + " credits";
+  range.textContent = recData.range[0] + "–" + recData.range[1] + " suggested range";
+  if (!offer.value) offer.value = recData.recommended;
+}
+function buildPreview() {
+  const cat = chosenCategory();
+  document.querySelector("#pv-dot").className = "cat-dot cat-" + cat.replace(/&/g, "and").replace(/ /g, "-");
+  document.querySelector("#pv-cat").textContent = cat;
+  document.querySelector("#pv-title").textContent = title.value;
+  document.querySelector("#pv-desc").textContent = description.value;
+  const meta = [];
+  meta.push("requested by {{ user.name }}");
+  if (chosenLocation()) meta.push("📍 " + chosenLocation());
+  if (neededBy.value) meta.push("⏰ needed by " + neededBy.value);
+  if (urgencyValue.value) meta.push(urgencyValue.value);
+  document.querySelector("#pv-meta").textContent = meta.join(" · ");
+  document.querySelector("#pv-offer").textContent = offer.value + " ± " + buffer.value;
+  if (recData) {
+    document.querySelector("#pv-rec").textContent = recData.recommended;
+    document.querySelector("#pv-recrec").textContent = "(" + recData.range[0] + "–" + recData.range[1] + " range)";
+    const outside = Number(offer.value) < recData.range[0] || Number(offer.value) > recData.range[1];
+    document.querySelector("#range-warning").hidden = !outside;
+    document.querySelector("#range-check").checked = false;
+    document.querySelector("#confirm-range").value = "";
+    submitBtn.disabled = outside;
+    submitBtn.style.opacity = outside ? ".4" : "1";
+  }
+}
+function show(i) {
+  current = i;
+  steps.forEach((s, idx) => s.classList.toggle("active", idx === i));
+  dots.forEach((d, idx) => d.classList.toggle("active", idx === i));
+  backBtn.hidden = i === 0;
+  cancelLink.hidden = i !== 0;
+  nextBtn.hidden = i === steps.length - 1;
+  submitBtn.hidden = i !== steps.length - 1;
+  if (i === 1 && !title.value.trim() && chosenCategory()) {
+    title.value = "Help with " + chosenCategory();
+  }
+  if (i === 2) updateRecommendation();
+  if (i === 3) buildPreview();
+}
+function markInvalid(el) {
+  el.style.outline = "2px solid #c0392b";
+  el.focus();
+  setTimeout(() => el.style.outline = "", 1500);
+}
+function validStep(i) {
+  if (i === 0 && !chosenCategory()) { alert("Pick a genre first."); return false; }
+  if (i === 1) {
+    if (!title.value.trim()) { markInvalid(title); return false; }
+    if (!description.value.trim()) { markInvalid(description); return false; }
+    if (!chosenLocation()) { markInvalid(locationInput); return false; }
+  }
+  if (i === 2 && !offer.value) { markInvalid(offer); return false; }
+  return true;
+}
+nextBtn.addEventListener("click", () => { if (validStep(current)) show(current + 1); });
+backBtn.addEventListener("click", () => show(current - 1));
+document.querySelector("#range-check").addEventListener("change", (e) => {
+  document.querySelector("#confirm-range").value = e.target.checked ? "1" : "";
+  submitBtn.disabled = !e.target.checked;
+  submitBtn.style.opacity = e.target.checked ? "1" : ".4";
+});
+document.querySelector("#task-form").addEventListener("submit", (e) => {
+  document.querySelector("#spinner").hidden = false;
+});
+</script>
+{% endblock %}
