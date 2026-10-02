@@ -520,10 +520,14 @@ def decide_dispute(request: Request, dispute_id: int, decision: str = Form(...))
 def estimate(
     request: Request,
     category: str,
-    effort_minutes: int = 30,
-    complexity: int = 3,
+    title: str = "",
+    description: str = "",
+    effort_minutes: int | None = None,
+    complexity: int | None = None,
     quality_score: int = 3,
 ):
+    if effort_minutes is None or complexity is None:
+        effort_minutes, complexity = infer_task_attributes(title, description, category)
     with db() as connection:
         result = recommendation(
             connection,
