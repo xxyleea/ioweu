@@ -68,14 +68,18 @@ def init_db() -> None:
                 status TEXT NOT NULL DEFAULT 'open', provider_id INTEGER,
                 requester_value INTEGER, requester_buffer INTEGER,
                 provider_value INTEGER, provider_buffer INTEGER,
-                agreed_value INTEGER, negotiation_deadline TEXT, created_at TEXT NOT NULL,
+                agreed_value INTEGER, negotiation_deadline TEXT,
+                effort_minutes INTEGER, complexity INTEGER, quality_score INTEGER,
+                created_at TEXT NOT NULL,
                 FOREIGN KEY(requester_id) REFERENCES users(id),
                 FOREIGN KEY(provider_id) REFERENCES users(id)
             );
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY, request_id INTEGER UNIQUE NOT NULL,
                 requester_id INTEGER NOT NULL, provider_id INTEGER NOT NULL,
-                value INTEGER NOT NULL, created_at TEXT NOT NULL,
+                value INTEGER NOT NULL, effort_minutes INTEGER,
+                complexity INTEGER, quality_score INTEGER,
+                created_at TEXT NOT NULL,
                 FOREIGN KEY(request_id) REFERENCES requests(id),
                 FOREIGN KEY(requester_id) REFERENCES users(id),
                 FOREIGN KEY(provider_id) REFERENCES users(id)
@@ -92,6 +96,13 @@ def init_db() -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(requests)")}
         if "negotiation_deadline" not in columns:
             connection.execute("ALTER TABLE requests ADD COLUMN negotiation_deadline TEXT")
+        for column in ("effort_minutes", "complexity", "quality_score"):
+            if column not in columns:
+                connection.execute(f"ALTER TABLE requests ADD COLUMN {column} INTEGER")
+        transaction_columns = {row["name"] for row in connection.execute("PRAGMA table_info(transactions)")}
+        for column in ("effort_minutes", "complexity", "quality_score"):
+            if column not in transaction_columns:
+                connection.execute(f"ALTER TABLE transactions ADD COLUMN {column} INTEGER")
         legacy_negotiations = connection.execute(
             """SELECT id, created_at FROM requests
                WHERE status='negotiating' AND negotiation_deadline IS NULL"""
@@ -138,6 +149,50 @@ def comparable_stats(connection: sqlite3.Connection, category: str) -> tuple[int
     midpoint = values[len(values) // 2]
     spread = max(2, round(midpoint * 0.35)) if len(values) < 5 else max(1, round(midpoint * 0.2))
     return midpoint, spread
+
+
+def recommendation(
+    connection: sqlite3.Connection,
+    category: str,
+    effort_minutes: int = 30,
+    complexity: int = 3,
+    quality_score: int = 3,
+) -> dict[str, Any]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+    rows = connection.execute(
+        """SELECT t.value, t.effort_minutes, t.complexity, t.quality_score
+           FROM transactions t JOIN requests r ON r.id=t.request_id
+           WHERE r.category=? AND t.created_at>=? ORDER BY t.value""",
+        (category.lower(), cutoff),
+    ).fetchall()
+    if not rows:
+        midpoint, spread = comparable_stats(connection, category.lower())
+        return {
+            "recommended": midpoint,
+            "range": [max(1, midpoint - spread), midpoint + spread],
+            "benchmark": midpoint,
+            "adjustments": {"effort": 1.0, "complexity": 1.0, "quality": 1.0},
+            "sample_size": 0,
+        }
+    benchmark = rows[len(rows) // 2]["value"]
+    measured_effort = [row["effort_minutes"] for row in rows if row["effort_minutes"]]
+    typical_effort = sum(measured_effort) / len(measured_effort) if measured_effort else 30
+    effort_factor = max(0.5, min(1.5, effort_minutes / typical_effort))
+    complexity_factor = max(0.7, min(1.3, 1 + 0.1 * (complexity - 3)))
+    quality_factor = max(0.8, min(1.2, 1 + 0.05 * (quality_score - 3)))
+    suggested = max(1, round(benchmark * effort_factor * complexity_factor * quality_factor))
+    spread = max(1, round(suggested * (0.2 if len(rows) >= 5 else 0.35)))
+    return {
+        "recommended": suggested,
+        "range": [max(1, suggested - spread), suggested + spread],
+        "benchmark": benchmark,
+        "adjustments": {
+            "effort": round(effort_factor, 2),
+            "complexity": round(complexity_factor, 2),
+            "quality": round(quality_factor, 2),
+        },
+        "sample_size": len(rows),
+    }
 
 
 def render(request: Request, template: str, **context: Any) -> HTMLResponse:
@@ -382,7 +437,19 @@ def decide_dispute(request: Request, dispute_id: int, decision: str = Form(...))
 
 
 @app.get("/estimate/{category}")
-def estimate(request: Request, category: str):
+def estimate(
+    request: Request,
+    category: str,
+    effort_minutes: int = 30,
+    complexity: int = 3,
+    quality_score: int = 3,
+):
     with db() as connection:
-        midpoint, spread = comparable_stats(connection, category.lower())
-    return {"category": category, "recommended": midpoint, "range": [max(1, midpoint - spread), midpoint + spread]}
+        result = recommendation(
+            connection,
+            category,
+            max(1, effort_minutes),
+            max(1, min(5, complexity)),
+            max(1, min(5, quality_score)),
+        )
+    return {"category": category, **result}
