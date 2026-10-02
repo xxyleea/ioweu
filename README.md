@@ -21,6 +21,8 @@ The prototype includes the request board, requester-side offers with buffers, pr
 
 When an agreed task is started, its credits move from the requester's available balance into held escrow. They are released to the provider only after both parties confirm completion. The requester must remain above the configurable `-50` credit floor when escrow is created.
 
+Users must have an available balance of at least `-20` credits to post a new request. The favicon is served at `/favicon.ico`.
+
 ## Seed recommendation history
 
 To add realistic completed exchanges for the estimator:

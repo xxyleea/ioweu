@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -19,6 +19,7 @@ BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "ioweu.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
 MIN_BALANCE = -50
+MIN_REQUEST_BALANCE = -20
 TASK_CATEGORIES = (
     "errands",
     "childcare",
@@ -310,6 +311,11 @@ def home(request: Request):
     )
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(BASE_DIR / "static" / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     return render(request, "login.html", error=None)
@@ -343,6 +349,12 @@ def create_request(
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if user["balance"] < MIN_REQUEST_BALANCE:
+        return render(
+            request,
+            "error.html",
+            message=f"Your available balance is {user['balance']} credits. You must be at or above {MIN_REQUEST_BALANCE} credits to post a new request.",
+        )
     category = category.strip().lower()
     if category not in TASK_CATEGORIES:
         return render(request, "error.html", message="Please choose a valid task category.")
