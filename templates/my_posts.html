@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}IoU · My posts{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>My posts</h1>
+    <p class="muted">Track your requests from first offer to final credit.</p>
+  </div>
+</header>
+
+<form class="card create-card" method="post" action="/requests">
+  <h2>Ask your neighbours</h2>
+  <input id="new-title" name="title" placeholder="What do you need? e.g. Pick up groceries" required>
+  <p class="field-label">Pick a genre</p>
+  <div class="genre-row" id="genre-row">
+    {% for category in task_categories %}
+    <label class="genre-chip cat-{{ category.replace(' ', '-') }}"><input type="radio" name="category" value="{{ category }}" required><span>{{ category|title }}</span></label>
+    {% endfor %}
+  </div>
+  <textarea id="new-description" name="description" placeholder="Add useful details — what, where, when, how long it might take" required></textarea>
+  <div class="ai-suggestion">
+    <b>IoU suggested offer</b>
+    <div class="ai-nums"><output id="new-recommendation">Describe the task to calculate</output><span id="new-range"></span></div>
+    <small>Calculated from recent comparable tasks and your task details.</small>
+  </div>
+  <div class="value-form">
+    <label>Your offer<input id="new-offered-value" type="number" name="offered_value" min="1" placeholder="Credits" required></label>
+    <label>Offer buffer ±<input type="number" name="offered_buffer" min="0" value="2" required></label>
+  </div>
+  <label class="warning-confirm"><input type="checkbox" name="confirm_outside_range" value="1"> I understand and confirm an offer outside the recommendation.</label>
+  <button class="btn-primary btn-wide">Post request →</button>
+</form>
+
+<h2 class="section-title">Waiting for a helper</h2>
+<div class="card-list">
+{% for item in my_open %}{% include "request_card.html" %}{% else %}<p class="empty">No open requests. Post one above.</p>{% endfor %}
+</div>
+
+<h2 class="section-title">In progress</h2>
+<div class="card-list">
+{% for item in my_active %}{% include "request_card.html" %}{% else %}<p class="empty">Nothing being negotiated or done right now.</p>{% endfor %}
+</div>
+
+<h2 class="section-title">Helping others</h2>
+<div class="card-list">
+{% for item in joined_requests %}{% include "request_card.html" %}{% else %}<p class="empty">Tasks you accept on the Browse page appear here.</p>{% endfor %}
+</div>
+
+<h2 class="section-title">Completed</h2>
+<div class="card-list">
+{% for item in my_completed %}{% include "request_card.html" %}{% else %}<p class="empty">Your finished exchanges will land here.</p>{% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const title = document.querySelector("#new-title");
+const description = document.querySelector("#new-description");
+const recommendation = document.querySelector("#new-recommendation");
+const range = document.querySelector("#new-range");
+const offer = document.querySelector("#new-offered-value");
+let recommendationTimer;
+function chosenCategory() {
+  const checked = document.querySelector("input[name=category]:checked");
+  return checked ? checked.value : "";
+}
+async function updateRecommendation() {
+  const category = chosenCategory();
+  if (!category || !description.value.trim()) {
+    recommendation.textContent = "Describe the task to calculate";
+    range.textContent = "";
+    return;
+  }
+  const query = new URLSearchParams({title: title.value, description: description.value});
+  const response = await fetch("/estimate/" + encodeURIComponent(category) + "?" + query);
+  if (!response.ok) return;
+  const data = await response.json();
+  recommendation.textContent = data.recommended + " credits";
+  range.textContent = data.range[0] + "–" + data.range[1] + " suggested range";
+  offer.value = data.recommended;
+}
+function scheduleRecommendation() {
+  clearTimeout(recommendationTimer);
+  recommendationTimer = setTimeout(updateRecommendation, 250);
+}
+[title, description].forEach(field => field.addEventListener("input", scheduleRecommendation));
+document.querySelectorAll("input[name=category]").forEach(radio => radio.addEventListener("change", scheduleRecommendation));
+</script>
+{% endblock %}

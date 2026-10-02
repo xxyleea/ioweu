@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}IoU · Home{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Hello, {{ user.name.split(' ')[0] }}</h1>
+    <p class="muted">Here's your neighbourhood credit at a glance.</p>
+  </div>
+  <a class="btn-primary" href="/my-posts">+ New request</a>
+</header>
+
+<section class="bento">
+  <div class="card stat-card stat-yellow">
+    <span class="stat-label">Available credits</span>
+    <span class="stat-big">{{ user.balance }}</span>
+    <span class="stat-sub">credits you can offer</span>
+  </div>
+  <div class="card stat-card stat-blue">
+    <span class="stat-label">Held in escrow</span>
+    <span class="stat-big">{{ user.held_balance }}</span>
+    <span class="stat-sub">released when tasks complete</span>
+  </div>
+  <div class="card stat-card stat-pink">
+    <span class="stat-label">Exchanges done</span>
+    <span class="stat-big">{{ stats.completed }}</span>
+    <span class="stat-sub">{{ stats.helped }} as the helper</span>
+  </div>
+  <div class="card stat-card stat-green">
+    <span class="stat-label">Kudos earned</span>
+    <span class="stat-big">+{{ stats.kudos }}</span>
+    <span class="stat-sub">bonus credits from grateful neighbours</span>
+  </div>
+</section>
+
+<h2 class="section-title">Your active exchanges</h2>
+<div class="card-list">
+{% for item in active_items %}{% include "request_card.html" %}{% else %}
+  <div class="card empty-card"><p class="empty">Nothing in flight right now.</p><a class="btn-ghost" href="/browse">Find someone to help →</a></div>
+{% endfor %}
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h2>Credit activity</h2>
+    <ul class="ledger-list">
+    {% for item in ledger[:8] %}
+      <li><span class="ledger-amount {% if item.amount > 0 %}pos{% else %}neg{% endif %}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</span><div><b>{{ item.kind.replace('_',' ') }}</b>{% if item.title %} · {{ item.title }}{% endif %}<br><small>{{ item.description }}</small></div></li>
+    {% else %}<li class="empty">No ledger activity yet.</li>{% endfor %}
+    </ul>
+  </div>
+  <div class="card how-card">
+    <h2>How value works</h2>
+    <p>Both sides submit a value and a buffer. If the ranges overlap, IoU proposes the middle of the overlap. Otherwise you have 3 days to compromise before the request reopens.</p>
+    <p>Credits are held in escrow while a task runs, and only move when both sides confirm completion.</p>
+  </div>
+</div>
+
+{% if user.is_moderator %}
+<h2 class="section-title">Moderator queue</h2>
+<div class="card">
+  {% for dispute in disputes %}
+  <div class="moderator-item"><b>{{ dispute.title }}</b><p>{{ dispute.description }}</p><small>Requested refund: {{ dispute.requested_refund_amount }} · {{ dispute.recommendation }}</small>
+    <form class="mod-form" method="post" action="/disputes/{{ dispute.id }}/decide"><select name="decision"><option value="deny">No refund</option><option value="partial">Partial refund</option><option value="full">Full refund</option></select><button class="btn-small">Record decision</button></form>
+  </div>
+  {% else %}<p class="empty">No open disputes. Enjoy the calm.</p>{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

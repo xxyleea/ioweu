@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}IoU · Browse{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Neighbourhood board</h1>
+    <p class="muted">Open requests from other residents. Offer to help, agree a fair value, earn credits.</p>
+  </div>
+</header>
+
+<div class="filter-row" id="filter-row">
+  <button class="filter-chip active" data-filter="all">All</button>
+  {% for category in task_categories %}
+  <button class="filter-chip cat-{{ category.replace(' ', '-') }}" data-filter="{{ category }}">{{ category|title }}</button>
+  {% endfor %}
+</div>
+
+<div class="card-grid" id="board">
+{% for item in community_requests %}
+  <div class="grid-item" data-category="{{ item.category }}">{% include "request_card.html" %}</div>
+{% else %}
+  <div class="card empty-card"><p class="empty">No open requests from other residents right now. Check back soon.</p></div>
+{% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const chips = document.querySelectorAll(".filter-chip");
+const items = document.querySelectorAll("#board .grid-item");
+chips.forEach(chip => chip.addEventListener("click", () => {
+  chips.forEach(c => c.classList.remove("active"));
+  chip.classList.add("active");
+  const filter = chip.dataset.filter;
+  items.forEach(el => {
+    el.style.display = (filter === "all" || el.dataset.category === filter) ? "" : "none";
+  });
+}));
+</script>
+{% endblock %}

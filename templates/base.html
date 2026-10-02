@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{% block title %}IoU{% endblock %}</title><link rel="icon" href="/favicon.ico"><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="/static/style.css"></head>
+<body class="app-body">
+<nav class="sidebar">
+  <a class="brand" href="/"><span class="brand-dot"></span>IoU</a>
+  <p class="brand-tag">Small favours,<br>fair credit.</p>
+  <div class="nav-links">
+    <a class="nav-link {% if page == 'home' %}active{% endif %}" href="/"><span class="nav-ico">⌂</span>Home</a>
+    <a class="nav-link {% if page == 'posts' %}active{% endif %}" href="/my-posts"><span class="nav-ico">✎</span>My posts</a>
+    <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Browse</a>
+  </div>
+  <div class="sidebar-user">
+    <div class="avatar">{{ user.name[0] }}</div>
+    <div class="sidebar-user-meta"><b>{{ user.name }}</b><small>{{ user.email }}</small></div>
+    <form method="post" action="/logout"><button class="link-button" title="Sign out">⏻</button></form>
+  </div>
+</nav>
+<main class="content">{% block content %}{% endblock %}</main>
+{% block scripts %}{% endblock %}
+</body></html>

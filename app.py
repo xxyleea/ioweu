@@ -298,61 +298,137 @@ def startup() -> None:
     init_db()
 
 
+def load_board(connection: sqlite3.Connection):
+    expire_negotiations(connection)
+    requests = connection.execute(
+        """SELECT r.*, u.name requester_name, p.name provider_name
+           FROM requests r JOIN users u ON u.id=r.requester_id
+           LEFT JOIN users p ON p.id=r.provider_id ORDER BY r.created_at DESC"""
+    ).fetchall()
+    recommendations = {
+        item["id"]: recommendation(
+            connection,
+            item["category"],
+            item["effort_minutes"] or 30,
+            item["complexity"] or 3,
+            item["quality_score"] or 3,
+        )
+        for item in requests
+    }
+    return requests, recommendations
+
+
+def load_history(connection: sqlite3.Connection, user_id: int):
+    return connection.execute(
+        """SELECT t.*, r.title, u.name provider_name FROM transactions t
+           JOIN requests r ON r.id=t.request_id JOIN users u ON u.id=t.provider_id
+           WHERE t.requester_id=? OR t.provider_id=? ORDER BY t.created_at DESC""",
+        (user_id, user_id),
+    ).fetchall()
+
+
+def load_disputes(connection: sqlite3.Connection):
+    return connection.execute(
+        """SELECT d.*, r.title, r.agreed_value, u.name opened_by_name
+           FROM disputes d JOIN requests r ON r.id=d.request_id
+           JOIN users u ON u.id=d.opened_by ORDER BY d.id DESC"""
+    ).fetchall()
+
+
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        expire_negotiations(connection)
-        requests = connection.execute(
-            """SELECT r.*, u.name requester_name, p.name provider_name
-               FROM requests r JOIN users u ON u.id=r.requester_id
-               LEFT JOIN users p ON p.id=r.provider_id ORDER BY r.created_at DESC"""
-        ).fetchall()
-        recommendations = {
-            item["id"]: recommendation(
-                connection,
-                item["category"],
-                item["effort_minutes"] or 30,
-                item["complexity"] or 3,
-                item["quality_score"] or 3,
-            )
-            for item in requests
-        }
-        my_requests = [item for item in requests if item["requester_id"] == user["id"]]
-        joined_requests = [
+        requests, recommendations = load_board(connection)
+        active_items = [
             item for item in requests
-            if item["provider_id"] == user["id"] and item["requester_id"] != user["id"]
+            if (item["requester_id"] == user["id"] or item["provider_id"] == user["id"])
+            and item["status"] != "completed"
         ]
-        community_requests = [
-            item for item in requests
-            if item["requester_id"] != user["id"] and item["provider_id"] is None
-        ]
-        history = connection.execute(
-            """SELECT t.*, r.title, u.name provider_name FROM transactions t
-               JOIN requests r ON r.id=t.request_id JOIN users u ON u.id=t.provider_id
-               WHERE t.requester_id=? OR t.provider_id=? ORDER BY t.created_at DESC""",
-            (user["id"], user["id"]),
-        ).fetchall()
-        disputes = connection.execute(
-            """SELECT d.*, r.title, r.agreed_value, u.name opened_by_name
-               FROM disputes d JOIN requests r ON r.id=d.request_id
-               JOIN users u ON u.id=d.opened_by ORDER BY d.id DESC"""
-        ).fetchall()
+        history = load_history(connection, user["id"])
+        disputes = load_disputes(connection)
         ledger = connection.execute(
             """SELECT l.*, r.title FROM ledger l LEFT JOIN requests r ON r.id=l.request_id
                WHERE l.user_id=? ORDER BY l.created_at DESC""", (user["id"],)
         ).fetchall()
+        stats = {
+            "completed": connection.execute(
+                "SELECT COUNT(*) c FROM transactions WHERE requester_id=? OR provider_id=?",
+                (user["id"], user["id"])).fetchone()["c"],
+            "helped": connection.execute(
+                "SELECT COUNT(*) c FROM transactions WHERE provider_id=?",
+                (user["id"],)).fetchone()["c"],
+            "kudos": connection.execute(
+                "SELECT COALESCE(SUM(kudos_bonus),0) s FROM transactions WHERE provider_id=?",
+                (user["id"],)).fetchone()["s"],
+        }
     return render(
         request,
-        "index.html",
-        my_requests=my_requests,
-        joined_requests=joined_requests,
-        community_requests=community_requests,
+        "dashboard.html",
+        page="home",
+        active_items=active_items,
         history=history,
         disputes=disputes,
         ledger=ledger,
+        recommendations=recommendations,
+        stats=stats,
+        task_categories=TASK_CATEGORIES,
+    )
+
+
+@app.get("/my-posts", response_class=HTMLResponse)
+def my_posts(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        requests, recommendations = load_board(connection)
+        mine = [item for item in requests if item["requester_id"] == user["id"]]
+        my_open = [item for item in mine if item["status"] == "open"]
+        my_active = [item for item in mine if item["status"] != "completed" and item["status"] != "open"]
+        my_completed = [item for item in mine if item["status"] == "completed"]
+        joined = [
+            item for item in requests
+            if item["provider_id"] == user["id"] and item["requester_id"] != user["id"]
+        ]
+        history = load_history(connection, user["id"])
+        disputes = load_disputes(connection)
+    return render(
+        request,
+        "my_posts.html",
+        page="posts",
+        my_open=my_open,
+        my_active=my_active,
+        my_completed=my_completed,
+        joined_requests=joined,
+        history=history,
+        disputes=disputes,
+        recommendations=recommendations,
+        task_categories=TASK_CATEGORIES,
+    )
+
+
+@app.get("/browse", response_class=HTMLResponse)
+def browse(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        requests, recommendations = load_board(connection)
+        community_requests = [
+            item for item in requests
+            if item["requester_id"] != user["id"] and item["provider_id"] is None
+        ]
+        history = load_history(connection, user["id"])
+    return render(
+        request,
+        "browse.html",
+        page="browse",
+        community_requests=community_requests,
+        history=history,
+        disputes=[],
         recommendations=recommendations,
         task_categories=TASK_CATEGORIES,
     )
