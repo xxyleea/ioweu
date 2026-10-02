@@ -3,25 +3,27 @@
 {% block content %}
 <header class="page-head">
   <div>
-    <h1>Messages</h1>
-    <p class="muted">Offers, negotiation updates and chats for your exchanges.</p>
+    <h1>Your exchanges</h1>
+    <p class="muted">Every task you're working on with a neighbour, in one place.</p>
   </div>
 </header>
 
-<div class="card threads-panel">
-{% for t in threads %}
-  <a class="ws-thread thread-row" href="/chat/{{ t.id }}">
-    <div class="thread-main">
-      <b>{{ t.title }}{% if t.unread_count %}<span class="thread-unread">● {{ t.unread_count }}</span>{% endif %}</b>
-      <small>{{ t.last_body[:90] }}</small>
+<div class="exchange-table">
+{% for e in exchanges %}
+  <a class="exchange-row card {% if e.needs %}needs{% endif %}" href="{{ e.href }}">
+    <div class="ex-main">
+      <b>{{ e.t.title }}{% if e.t.unread_count %}<span class="thread-unread">● {{ e.t.unread_count }}</span>{% endif %}</b>
+      <small class="muted">with {% if e.t.requester_name == user.name %}{{ e.t.provider_name or '…' }}{% else %}{{ e.t.requester_name }}{% endif %}</small>
+      <small class="ex-preview">{{ e.t.last_body[:80] }}</small>
     </div>
-    <div class="thread-right">
-      <span class="status s-{{ t.status }}">{{ status_labels[t.status] if status_labels is defined and t.status in status_labels else t.status.replace('_',' ') }}</span>
-      <small class="muted">{{ t.last_at[:16].replace('T',' ') }}</small>
+    <div class="ex-side">
+      <span class="status s-{{ e.t.status }}">{{ status_labels[e.t.status] if e.t.status in status_labels else e.t.status.replace('_',' ') }}</span>
+      {% if e.needs %}<span class="ex-action">Action required →</span>
+      {% else %}<small class="muted">{{ e.t.last_at[:16].replace('T',' ') }}</small>{% endif %}
     </div>
   </a>
 {% else %}
-  <p class="empty threads-empty">No conversations yet. Offer to help someone on the Community board and your thread appears here. <a href="/browse">Go to Community →</a></p>
+  <div class="card"><p class="empty">No exchanges yet. Offer to help someone on the Community board and it appears here. <a href="/browse">Go to Community →</a></p></div>
 {% endfor %}
 </div>
 {% endblock %}

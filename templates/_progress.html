@@ -1,0 +1,26 @@
+{% set si = stage_map[item.status] %}
+{% if si == 4 %}
+<div class="progress4 resolve-mode">
+  <span class="p4-node current resolve">⚖ Resolve</span>
+  <p class="p4-sub muted">This exchange is being resolved — normal progress resumes afterwards.</p>
+</div>
+{% else %}
+{% set subs = [["Offer","Agreement"],["Meetup"],["Task"],["Review","Credits released"]] %}
+<div class="progress4">
+  {% for stage in stage_labels[:4] %}
+  {% set i = loop.index0 %}
+  <div class="p4-node {% if i < si %}done{% elif i == si %}current{% endif %}">
+    <span class="p4-dot"></span>
+    <b>{{ stage }}</b>
+    <div class="p4-subs">
+      {% for sub in subs[i] %}
+      {% set subdone = i < si or (i == si and item.status in ('completed','resolved')) %}
+      <span class="p4-sub {% if subdone %}done{% elif i == si %}current{% endif %}">
+        {% if subdone %}✓{% elif i == si %}●{% else %}○{% endif %} {{ sub }}
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

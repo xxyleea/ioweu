@@ -385,6 +385,8 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     user = current_user(request)
     context["user"] = user
     context.setdefault("status_labels", STATUS_LABELS)
+    context.setdefault("stage_labels", STAGE_LABELS)
+    context.setdefault("stage_map", STAGE_MAP)
     if user and "unread_msgs" not in context:
         with db() as connection:
             auto_resolve_reviews(connection)
@@ -452,6 +454,15 @@ TIMELINE_STEPS = [
     "Credits escrowed", "Meeting confirmed", "Task started",
     "Completion submitted", "Completion confirmed", "Credits released",
 ]
+
+STAGE_LABELS = ["Agree", "Plan", "Do", "Complete", "Resolve"]
+STAGE_MAP = {
+    "open": 0, "negotiating": 0, "agreement_pending": 0,
+    "confirmed": 1, "scheduled": 1,
+    "in_progress": 2,
+    "completion_submitted": 3, "completed": 3, "resolved": 3,
+    "disputed": 4, "human_review": 4,
+}
 
 STATUS_STEP = {
     "open": 0, "negotiating": 1, "agreement_pending": 2, "confirmed": 4,
@@ -602,9 +613,15 @@ def home(request: Request):
             and item["status"] not in ("completed", "resolved")
         ]
         active_items.sort(key=lambda i: i["id"] not in pinned_ids)
-        my_tasks = [i for i in active_items if i["requester_id"] == user["id"]]
-        helping_tasks = [i for i in active_items if i["provider_id"] == user["id"]]
-        pinned_items = [i for i in requests if i["id"] in pinned_ids]
+        exchanges = []
+        for i in active_items:
+            needs, cta, label, href = exchange_flag(connection, i, user["id"])
+            exchanges.append({"item": i, "needs": needs, "cta": cta, "label": label, "href": href})
+        exchanges.sort(key=lambda e: not e["needs"])
+        action_notifs = connection.execute(
+            "SELECT * FROM notifications WHERE user_id=? AND is_read=0 AND kind='action' ORDER BY created_at DESC LIMIT 5",
+            (user["id"],)).fetchall()
+        action_count = sum(1 for e in exchanges if e["needs"])
         history = load_history(connection, user["id"])
         disputes = load_disputes(connection)
         ledger = connection.execute(
@@ -635,9 +652,9 @@ def home(request: Request):
         "dashboard.html",
         page="home",
         active_items=active_items,
-        my_tasks=my_tasks,
-        helping_tasks=helping_tasks,
-        pinned_items=pinned_items,
+        exchanges=exchanges,
+        action_notifs=action_notifs,
+        action_count=action_count,
         pinned_ids=pinned_ids,
         history=history,
         disputes=disputes,
@@ -984,7 +1001,13 @@ def messages_page(request: Request):
                ORDER BY last_at DESC""",
             (user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
-    return render(request, "messages.html", page="messages", threads=threads)
+        exchanges = []
+        for t in threads:
+            item = load_request(connection, t["id"])
+            needs, cta, label, href = exchange_flag(connection, item, user["id"])
+            exchanges.append({"t": t, "needs": needs, "cta": cta, "label": label, "href": href})
+        exchanges.sort(key=lambda e: not e["needs"])
+    return render(request, "messages.html", page="messages", exchanges=exchanges)
 
 
 @app.get("/chat/{request_id}", response_class=HTMLResponse)
@@ -1320,9 +1343,25 @@ def hero_for(item, user_id, offer, meetup, dispute, my_confirm):
     return waiting
 
 
+def exchange_flag(connection: sqlite3.Connection, item, user_id: int):
+    offer = pending_message(connection, item["id"], "offer")
+    meetup = pending_message(connection, item["id"], "meetup")
+    dispute = connection.execute(
+        "SELECT * FROM disputes WHERE request_id=?", (item["id"],)).fetchone()
+    my_confirm = (item["requester_id"] == user_id and item["confirm_requester"]) or \
+                 (item["provider_id"] == user_id and item["confirm_provider"])
+    hero = hero_for(item, user_id, offer, meetup, dispute, my_confirm)
+    cta = hero["action"]["text"] if hero.get("action") else ""
+    href = hero["action"]["href"] if hero.get("action") and hero["action"].get("href") else f"/chat/{item['id']}"
+    if item["status"] == "completion_submitted" and item["requester_id"] == user_id:
+        href = f"/chat/{item['id']}"
+    return hero["actor"] == "you", cta, hero["label"], href
+
+
 @app.post("/requests/{request_id}/offer")
 def make_offer(request: Request, request_id: int, mode: str = Form(...),
-               amount: int | None = Form(None), confirm_outside_range: str | None = Form(None),
+               amount: int | None = Form(None), note: str = Form(""),
+               confirm_outside_range: str | None = Form(None),
                next: str = Form("")):
     user = current_user(request)
     if not user:
@@ -1355,7 +1394,8 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
             connection.execute(
                 "UPDATE requests SET provider_value=?, provider_buffer=0 WHERE id=?", (value, request_id))
         add_message(connection, request_id, user["id"], "offer",
-                    f"{role} offered {value} credits", meta=json.dumps({"amount": value}), status="pending")
+                    f"{role} offered {value} credits",
+                    meta=json.dumps({"amount": value, "note": note.strip()}), status="pending")
         target = item["requester_id"] if not is_owner else item["provider_id"]
         notify(connection, target,
                f"New offer: {value} credits for \"{item['title']}\".", f"/chat/{request_id}", kind="action")

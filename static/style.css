@@ -566,3 +566,77 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .home-tasks .section-title{display:flex;align-items:center;gap:.5rem}
 .home-tasks section:first-child .section-title::before{content:"";width:10px;height:10px;border-radius:50%;background:#f0a860}
 .home-tasks section:last-child .section-title::before{content:"";width:10px;height:10px;border-radius:50%;background:#5cb8ab}
+
+/* ===== UX architecture refactor: semantic status colors ===== */
+.s-open{background:var(--blue)}
+.s-negotiating,.s-agreement_pending,.s-completion_submitted{background:var(--yellow)}
+.s-confirmed,.s-scheduled{background:var(--blue)}
+.s-in_progress{background:var(--purple)}
+.s-completed{background:var(--green)}
+.s-resolved{background:#e8e6e1;color:var(--muted)}
+.s-disputed,.s-human_review{background:#f3b0a7}
+
+/* ===== 4-stage progress ===== */
+.progress-card{padding:1.2rem 1.4rem}
+.progress4{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
+.p4-node{display:flex;flex-direction:column;gap:.35rem;padding:.6rem .8rem;border-radius:14px;background:rgba(0,0,0,.025)}
+.p4-node b{font-size:.92rem}
+.p4-dot{width:10px;height:10px;border-radius:50%;background:#d8d2c4}
+.p4-node.done .p4-dot{background:#7fb069}
+.p4-node.current{background:#fff;box-shadow:var(--shadow)}
+.p4-node.current .p4-dot{background:var(--ink)}
+.p4-node.resolve .p4-dot, .p4-node.resolve{background:#fdeae6}
+.p4-subs{display:flex;flex-direction:column;gap:.15rem}
+.p4-sub{font-size:.75rem;color:var(--muted)}
+.p4-sub.done{color:#5b8a4a}
+.p4-sub.current{color:var(--ink);font-weight:600}
+.progress4.resolve-mode{display:flex;align-items:center;gap:1rem}
+
+/* ===== detail: current action card ===== */
+.action-card{border-left:6px solid var(--ink);margin-bottom:1.6rem}
+.action-kicker{text-transform:uppercase;letter-spacing:.08em;font-weight:700;font-size:.7rem;color:var(--muted)}
+.action-label{font-size:1.15rem;font-weight:700;margin:.35rem 0 .2rem}
+.more-actions{margin-top:.8rem}
+.more-actions summary{cursor:pointer;color:var(--muted);font-size:.85rem}
+.more-actions-row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:.6rem}
+
+/* ===== chat workspace header + action bar ===== */
+.ws-header{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.8rem}
+.ws-task{display:flex;align-items:center;gap:.8rem;text-decoration:none;color:inherit}
+.ws-task:hover .tt-title{text-decoration:underline}
+.ws-actionbar{display:flex;align-items:center;justify-content:space-between;gap:1rem;background:#fff;border-radius:16px;padding:.7rem 1rem;box-shadow:var(--shadow)}
+.ws-actionbar.needs{border-left:5px solid #f0c860}
+.ws-alabel{font-weight:600;font-size:.9rem}
+.ws-alabel.allset{color:#3e6b23}
+.review-note{background:var(--bg);border-radius:12px;padding:.7rem .9rem;font-style:italic}
+.offer-note{margin:.25rem 0;font-style:italic;font-size:.85rem}
+
+/* ===== home refactor ===== */
+.home-primary{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.2rem;margin-bottom:2rem}
+.home-action{display:flex;flex-direction:column;gap:.3rem;text-decoration:none;color:inherit;padding:1.4rem;transition:transform .12s ease}
+.home-action:hover{transform:translateY(-2px)}
+.ha-emoji{font-size:1.6rem}
+.home-action b{font-size:1.1rem}
+.home-credit{justify-content:center}
+.home-section{margin-bottom:2rem}
+.action-list{display:flex;flex-direction:column;gap:.7rem}
+.action-row{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.3rem;text-decoration:none;color:inherit;border-left:5px solid #f0c860}
+.ar-main b{display:block}
+.ar-cta{font-weight:700;white-space:nowrap}
+.allset-card{color:#3e6b23;font-weight:600}
+.exchange-list{display:flex;flex-direction:column;gap:.7rem}
+.exchange-row{display:flex;align-items:center;gap:1rem;padding:.9rem 1.2rem;text-decoration:none;color:inherit}
+.exchange-row b{flex:1}
+.exchange-row .er-arrow{color:var(--muted)}
+.exchange-table{display:flex;flex-direction:column;gap:.7rem}
+.exchange-table .exchange-row.needs{border-left:5px solid #f0c860}
+.ex-main{flex:1;min-width:0}
+.ex-main b{display:block}
+.ex-preview{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34rem}
+.ex-side{display:flex;flex-direction:column;align-items:flex-end;gap:.3rem;flex-shrink:0}
+.ex-action{font-size:.8rem;font-weight:700;color:#8a6410}
+
+@media (max-width:1000px){
+  .home-primary{grid-template-columns:1fr}
+  .progress4{grid-template-columns:1fr 1fr}
+}

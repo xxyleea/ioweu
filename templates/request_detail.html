@@ -9,20 +9,16 @@
     <p class="muted">{{ item.category }} · requested by {{ item.requester_name }}{% if item.provider_name %} · helper {{ item.provider_name }}{% endif %}{% if item.location %} · 📍 {{ item.location }}{% endif %}{% if item.preferred_time %} · 🕒 meetup {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %} · ⏰ needed by {{ item.needed_by }}{% endif %}</p>
   </div>
   {% if involved and message_count %}
-  <a class="btn-ghost" href="/chat/{{ item.id }}">💬 Messages ({{ message_count }})</a>
+  <a class="btn-ghost" href="/chat/{{ item.id }}">💬 Open workspace</a>
   {% endif %}
 </header>
 
-<section class="card hero-card s-{{ item.status }}">
-  <div class="hero-top">
-    <span class="status s-{{ item.status }} big">{{ status_label }}</span>
-    {% if hero.actor == 'you' %}<span class="hero-actor you">Your move</span>
-    {% elif hero.actor == 'other' %}<span class="hero-actor">Waiting for the other side</span>{% endif %}
-  </div>
-  <p class="hero-label">{{ hero.label }}</p>
+<section class="card action-card s-{{ item.status }}">
+  <small class="action-kicker">{% if hero.actor == 'you' %}Action required{% elif hero.actor == 'other' %}Waiting for them{% else %}Current status{% endif %}</small>
+  <p class="action-label">{{ hero.label }}</p>
   {% if item.agreed_value and item.status not in ('open','negotiating') %}
   <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits agreed
-    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held in escrow{% endif %}
+    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held safely{% endif %}
     {% if item.status in ('completed','resolved') %}· released{% endif %}
   </p>
   {% endif %}
@@ -37,43 +33,37 @@
       <a class="btn-primary" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
       {% endif %}
     {% endif %}
-    {% if item.status == 'open' and is_owner %}
-    <a class="btn-ghost" href="/my-posts">Edit from My Posts</a>
-    <form method="post" action="/requests/{{ item.id }}/cancel" onsubmit="return confirm('Cancel this request? This cannot be undone.')"><button class="btn-ghost danger">Cancel request</button></form>
-    {% endif %}
-    {% if item.status == 'disputed' and involved %}
-    <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU to mediate</a>
-    {% endif %}
-    {% if item.status in ('completed','resolved') and is_owner %}
-      {% set transaction = history | selectattr('request_id', 'equalto', item.id) | first %}
-      {% if transaction and transaction.kudos_given %}
-      <span class="kudos-done">Kudos sent (+{{ transaction.kudos_bonus }} bonus)</span>
-      {% else %}
-      <form method="post" action="/requests/{{ item.id }}/kudos"><button class="kudos-button">Give Kudos (+10%)</button></form>
-      {% endif %}
-    {% endif %}
-    {% if item.status in ('completed','resolved') and involved %}
-    <details class="after-dispute"><summary>Report a problem</summary>
-      <p class="muted">Disputes after completion go straight to a community moderator.</p>
-      <form method="post" action="/requests/{{ item.id }}/dispute-after"><button class="btn-ghost danger">Open after-completion dispute</button></form>
-    </details>
-    {% endif %}
   </div>
+  {% set has_more = (item.status == 'open' and is_owner) or (item.status == 'disputed' and involved) or (item.status in ('completed','resolved') and (is_owner or involved)) %}
+  {% if has_more %}
+  <details class="more-actions"><summary>More actions</summary>
+    <div class="more-actions-row">
+      {% if item.status == 'open' and is_owner %}
+      <a class="btn-ghost" href="/my-posts">Edit from My Posts</a>
+      <form method="post" action="/requests/{{ item.id }}/cancel" onsubmit="return confirm('Cancel this request? This cannot be undone.')"><button class="btn-ghost danger">Cancel request</button></form>
+      {% endif %}
+      {% if item.status == 'disputed' and involved %}
+      <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU to mediate</a>
+      {% endif %}
+      {% if item.status in ('completed','resolved') and is_owner %}
+        {% set transaction = history | selectattr('request_id', 'equalto', item.id) | first %}
+        {% if transaction and transaction.kudos_given %}
+        <span class="kudos-done">Kudos sent (+{{ transaction.kudos_bonus }} bonus)</span>
+        {% else %}
+        <form method="post" action="/requests/{{ item.id }}/kudos"><button class="kudos-button">Give Kudos (+10%)</button></form>
+        {% endif %}
+      {% endif %}
+      {% if item.status in ('completed','resolved') and involved %}
+      <form method="post" action="/requests/{{ item.id }}/dispute-after" onsubmit="return confirm('Open an after-completion dispute? A moderator will review it.')"><button class="btn-ghost danger">Report a problem</button></form>
+      {% endif %}
+    </div>
+  </details>
+  {% endif %}
 </section>
 
 {% if item.status != 'open' %}
-<section class="card timeline-card">
-  <h2>Progress</h2>
-  <ol class="timeline">
-    {% for step in timeline_steps %}
-    <li class="{% if loop.index0 < step_index %}done{% elif loop.index0 == step_index %}current{% endif %}">
-      <span class="tl-dot"></span><span class="tl-label">{{ step }}</span>
-    </li>
-    {% endfor %}
-  </ol>
-  {% if item.status in ('disputed','human_review') %}
-  <p class="muted tl-note">⚖️ Settlement in progress — the timeline resumes once the dispute is resolved.</p>
-  {% endif %}
+<section class="card progress-card">
+  {% include "_progress.html" %}
 </section>
 {% endif %}
 
@@ -103,11 +93,9 @@
 {% if item.status == 'open' and not is_owner %}
 <div class="modal" id="offer-modal" hidden>
   <div class="modal-card">
-    <h2>Offer to help</h2>
-    <p class="muted">The requester is offering <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits. Accept it, or propose your own value.</p>
-    <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span class="muted">({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
+    <h2>Help with this task?</h2>
+    <p class="muted">The requester is offering <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits.</p>
     <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
-      <input type="hidden" name="next" value="/requests/{{ item.id }}">
       <input type="hidden" name="confirm_outside_range" value="1">
       <div class="offer-options">
         <label class="offer-option selected">
@@ -121,7 +109,9 @@
           <input class="opt-input" type="number" name="amount" min="1" value="{{ recommendations[item.id].recommended }}">
         </label>
       </div>
-      <p class="range-warning" hidden>⚠️ This is outside the requester's preferred range ({{ item.requester_value - item.requester_buffer }}–{{ item.requester_value + item.requester_buffer }}). You can still send it — they can accept or counter.</p>
+      <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ recommendations[item.id].recommended }}</span> credits <span class="muted">({{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} range)</span></p>
+      <label>Short note (optional)<input type="text" name="note" placeholder="e.g. Can come Saturday afternoon, bringing tools"></label>
+      <p class="range-warning" hidden>⚠️ Outside the requester's preferred range ({{ item.requester_value - item.requester_buffer }}–{{ item.requester_value + item.requester_buffer }}). You can still send it.</p>
       <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send offer</button></div>
     </form>
   </div>
@@ -148,6 +138,7 @@
     <h2>Mark as Complete</h2>
     <p class="muted">{{ item.agreed_value }} credits are held in escrow and released once the owner confirms.</p>
     <form method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete" class="modal-form">
+      <input type="hidden" name="next" value="/chat/{{ item.id }}">
       <label>Completion note (optional)<textarea name="note" rows="3" placeholder="What did you do? Anything the owner should know?"></textarea></label>
       <label>Upload evidence (optional, up to 3 files)<input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" multiple></label>
       <label class="check-row"><input type="checkbox" name="confirm_done" value="1" required> I confirm this task has been completed.</label>
@@ -163,6 +154,7 @@
     <h2>Start Task</h2>
     <p>Meeting confirmed for <b>{{ item.meetup_date }} at {{ item.meetup_time }}</b>. Start the task when you're ready.</p>
     <form method="post" action="/requests/{{ item.id }}/start" class="modal-actions">
+      <input type="hidden" name="next" value="/requests/{{ item.id }}">
       <button type="button" class="btn-ghost" data-modal-close>Back</button>
       <button class="btn-primary">Start Task</button>
     </form>

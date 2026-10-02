@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}IoU · Chat{% endblock %}
+{% block title %}IoU · {{ item.title }}{% endblock %}
 {% block content %}
 <div class="chat-workspace">
 <aside class="chat-threads card">
-  <h3>Messages</h3>
+  <h3>Exchanges</h3>
   {% for t in threads %}
   <a class="ws-thread {% if t.id == item.id %}active{% endif %}" href="/chat/{{ t.id }}">
     <b>{{ t.title }}</b>
@@ -14,33 +14,35 @@
 </aside>
 
 <div class="chat-main">
-<a class="chat-task-card" href="/requests/{{ item.id }}">
-  <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
-  <span class="tt-body">
-    <span class="tt-title">{{ item.title }}</span>
-    <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>
-  </span>
-  <span class="tt-arrow">→</span>
-</a>
-
-{% if hero.actor == 'you' %}
-<div class="action-banner">
-  <div><b>Action required</b><p>{{ hero.label }}</p></div>
-  {% if hero.action %}
-    {% if item.status == 'agreement_pending' %}
-    <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-primary">Confirm Exchange</button></form>
-    {% elif hero.action.modal %}
-    <button class="btn-primary" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
+<div class="ws-header">
+  <a class="ws-task" href="/requests/{{ item.id }}">
+    <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
+    <span class="tt-body">
+      <span class="tt-title">{{ item.title }}</span>
+      <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>
+    </span>
+  </a>
+  <div class="ws-actionbar {% if hero.actor == 'you' %}needs{% endif %}">
+    {% if hero.actor == 'you' %}
+      <span class="ws-alabel">{{ hero.label }}</span>
+      {% if item.status == 'completion_submitted' and item.requester_id == user.id %}
+      <button class="btn-primary" data-modal-open="review-modal">Review completion</button>
+      {% elif item.status == 'agreement_pending' %}
+      <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-primary">Confirm Exchange</button></form>
+      {% elif hero.action %}
+        {% if hero.action.modal %}
+        <button class="btn-primary" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
+        {% else %}
+        <a class="btn-primary" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
+        {% endif %}
+      {% endif %}
+    {% elif hero.actor == 'other' %}
+      <span class="ws-alabel allset">✓ You're all set. <span class="muted">{{ hero.label }}</span></span>
     {% else %}
-    <a class="btn-primary" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
+      <span class="ws-alabel muted">{{ hero.label }}</span>
     {% endif %}
-  {% endif %}
+  </div>
 </div>
-{% elif hero.actor == 'other' %}
-<div class="action-banner waiting">
-  <div><b>✓ You're all set.</b><p>{{ hero.label }}</p></div>
-</div>
-{% endif %}
 
 <div class="card chat-card" id="chat-box">
   {% include "_chat_messages.html" %}
@@ -52,6 +54,9 @@
   {% endif %}
   {% if item.status in ('confirmed','scheduled') %}
   <button class="btn-ghost" data-modal-open="meetup-modal">📅 Propose meeting</button>
+  {% endif %}
+  {% if item.status == 'in_progress' and item.provider_id == user.id %}
+  <button class="btn-ghost" data-modal-open="complete-modal">✔ Mark as Complete</button>
   {% endif %}
   {% if item.status == 'disputed' %}
   <button class="btn-ghost" data-modal-open="settlement-modal">⚖️ Propose settlement</button>
@@ -66,18 +71,21 @@
 </div>
 
 <aside class="chat-summary card">
-  <h3>{{ item.title }}</h3>
-  <p><span class="status s-{{ item.status }}">{{ status_label }}</span></p>
+  <h3>Task</h3>
   <dl class="summary-list">
-    {% if item.agreed_value %}<div><dt>Credits</dt><dd>{{ item.agreed_value }}{% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %} · held{% elif item.status in ('completed','resolved') %} · released{% endif %}</dd></div>{% endif %}
-    {% if item.status == 'scheduled' %}<div><dt>Meeting</dt><dd>{{ item.meetup_date }} · {{ item.meetup_time }}<br>{{ item.meetup_location }}</dd></div>{% endif %}
+    <div><dt>What</dt><dd>{{ item.description[:140] }}{% if item.description|length > 140 %}…{% endif %}</dd></div>
+    {% if item.location %}<div><dt>Where</dt><dd>{{ item.location }}</dd></div>{% endif %}
+    {% if item.preferred_time %}<div><dt>When</dt><dd>🕒 {{ item.preferred_time|replace('T',' ') }}</dd></div>
+    {% elif item.needed_by %}<div><dt>When</dt><dd>⏰ by {{ item.needed_by }}</dd></div>{% endif %}
     <div><dt>With</dt><dd>{{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %}</dd></div>
   </dl>
-  <div class="mini-progress">
-    {% for step in timeline_steps %}
-    <span class="mp-step {% if loop.index0 < step_index %}done{% elif loop.index0 == step_index %}current{% endif %}">{% if loop.index0 < step_index %}✓{% else %}○{% endif %} {{ step }}</span>
-    {% endfor %}
-  </div>
+  <h3>Transaction</h3>
+  <dl class="summary-list">
+    <div><dt>Credits</dt><dd>{{ item.agreed_value or item.requester_value }}
+      {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}</dd></div>
+    {% if item.status == 'scheduled' %}<div><dt>Meeting</dt><dd>{{ item.meetup_date }} · {{ item.meetup_time }}<br>{{ item.meetup_location }}</dd></div>{% endif %}
+    {% if item.status in ('disputed','human_review') %}<div><dt>Dispute</dt><dd>Credits frozen while resolving</dd></div>{% endif %}
+  </dl>
   <a class="btn-ghost" href="/requests/{{ item.id }}">View full task →</a>
 </aside>
 </div>
@@ -87,7 +95,6 @@
   <div class="modal-card">
     <h2>Make an offer</h2>
     <p class="muted">Requester's offer: <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits.</p>
-    <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ rec.recommended }}</span> credits <span class="muted">({{ rec.range[0] }}–{{ rec.range[1] }} range)</span></p>
     <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
       <input type="hidden" name="next" value="/chat/{{ item.id }}">
       <input type="hidden" name="confirm_outside_range" value="1">
@@ -103,7 +110,9 @@
           <input class="opt-input" type="number" name="amount" min="1" value="{{ rec.recommended }}">
         </label>
       </div>
-      <p class="range-warning" hidden>⚠️ This is outside the requester's preferred range ({{ item.requester_value - item.requester_buffer }}–{{ item.requester_value + item.requester_buffer }}). You can still send it — they can accept or counter.</p>
+      <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ rec.recommended }}</span> credits <span class="muted">({{ rec.range[0] }}–{{ rec.range[1] }} range)</span></p>
+      <label>Short note (optional)<input type="text" name="note" placeholder="e.g. Can come Saturday afternoon, bringing tools"></label>
+      <p class="range-warning" hidden>⚠️ Outside the requester's preferred range ({{ item.requester_value - item.requester_buffer }}–{{ item.requester_value + item.requester_buffer }}). You can still send it.</p>
       <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send offer</button></div>
     </form>
   </div>
@@ -135,6 +144,23 @@
       <label class="check-row"><input type="checkbox" name="confirm_done" value="1" required> I confirm this task has been completed.</label>
       <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Submit Completion</button></div>
     </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status == 'completion_submitted' and item.requester_id == user.id %}
+<div class="modal" id="review-modal" hidden>
+  <div class="modal-card">
+    <h2>Review completion</h2>
+    <p class="muted"><b>{{ item.provider_name }}</b> marked this task as completed.</p>
+    {% if item.completion_note %}<p class="review-note">"{{ item.completion_note }}"</p>{% endif %}
+    {% set ev = item.completion_evidence | from_json if item.completion_evidence else [] %}
+    {% if ev %}<p class="muted">📎 {{ ev|length }} file(s) attached — <a href="/requests/{{ item.id }}/review">open full review</a></p>{% endif %}
+    <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits will be released to the helper.</p>
+    <div class="modal-actions">
+      <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise dispute</a>
+      <form method="post" action="/requests/{{ item.id }}/review/confirm"><button class="btn-primary">Confirm &amp; release {{ item.agreed_value }} credits</button></form>
+    </div>
   </div>
 </div>
 {% endif %}
