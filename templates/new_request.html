@@ -106,10 +106,6 @@
       <p class="ai-suggestion"><b>Neighbourhood reference</b><span class="offer-num" id="pv-rec"></span> credits <span id="pv-recrec"></span></p>
       <p class="muted small" id="pv-window">Dispute window: 3 days after completion · exact address stays private</p>
     </article>
-    <div class="range-warning" id="range-warning" hidden>
-      <b>Your offer is outside the recommended range.</b>
-      <label class="warning-confirm"><input type="checkbox" id="range-check"> I understand and want to post it anyway.</label>
-    </div>
     <label class="check-row"><input type="checkbox" name="confirm_accurate" value="1" id="accurate-check"> I confirm that the description accurately represents the requested task.</label>
   </div>
 
@@ -228,12 +224,7 @@ function buildPreview() {
   if (recData) {
     document.querySelector("#pv-rec").textContent = recData.recommended;
     document.querySelector("#pv-recrec").textContent = "(" + recData.range[0] + "–" + recData.range[1] + " range)";
-    const outside = Number(offer.value) < recData.range[0] || Number(offer.value) > recData.range[1];
-    document.querySelector("#range-warning").hidden = !outside;
-    document.querySelector("#range-check").checked = false;
-    document.querySelector("#confirm-range").value = "";
-    submitBtn.disabled = outside;
-    submitBtn.style.opacity = outside ? ".4" : "1";
+    document.querySelector("#confirm-range").value = "1";
   }
 }
 function show(i) {
@@ -267,11 +258,6 @@ function validStep(i) {
 }
 nextBtn.addEventListener("click", () => { if (validStep(current)) show(current + 1); });
 backBtn.addEventListener("click", () => show(current - 1));
-document.querySelector("#range-check").addEventListener("change", (e) => {
-  document.querySelector("#confirm-range").value = e.target.checked ? "1" : "";
-  submitBtn.disabled = !e.target.checked;
-  submitBtn.style.opacity = e.target.checked ? "1" : ".4";
-});
 document.querySelector("#task-form").addEventListener("submit", (e) => {
   document.querySelector("#spinner").hidden = false;
 });
