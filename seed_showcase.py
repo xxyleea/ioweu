@@ -116,6 +116,71 @@ EXTRA_TASKS = [
     ("leo.ma.np@gmail.com", "Set up grandma's new phone", "Contacts, WhatsApp, and teaching her the camera, patiently.", "technology", 6, "soon", 60, 3),
 ]
 
+# Chats on completed jobs: HISTORY index -> [(speaker 'h'|'r', text), ...].
+# Threads involve the three demo logins: Priya, Carmen, Vivian.
+CHATS = {
+    0: [("r", "Hi Aisha! Same standing order as last week — choy sum, tofu, and whatever fruit looks good."),
+        ("h", "Got it! Leaving around 5pm, should reach you before dinner."),
+        ("r", "You're a star. Money for the vegetables is in the red bag by the door."),
+        ("h", "Delivered! Everything is on the kitchen bench like last time.")],
+    2: [("r", "Mei, are you around Tuesday afternoon? The minibus drops me at the stop but the stairs are the problem."),
+        ("h", "Tuesday works — meet you at the stop at 3:30."),
+        ("r", "Lifesaver. Only two bags this time, I promise!"),
+        ("h", "Haha, last time it was four. See you Tuesday!")],
+    3: [("r", "Vivian, you mentioned you make a mean congee — any chance of one more pot this week?"),
+        ("h", "Of course. Pumpkin and dried scallop okay? I'll bring it over around 6."),
+        ("r", "Perfect. I'll leave a clean pot on the doorstep for the return trip!")],
+    11: [("r", "Daniel, the wardrobe boxes arrived — all parts accounted for, I checked twice."),
+         ("h", "Great. Do you have a hammer and a rubber mallet? I'll bring the rest."),
+         ("r", "Both in the kitchen. Saturday morning still okay?"),
+         ("h", "9am sharp. Should be done before lunch.")],
+    14: [("r", "Carmen, could you take Thursday's pickup? I'll be at the clinic with my mum."),
+         ("h", "No problem, I'll be at the school gate at 3:15. He knows me from the block party."),
+         ("r", "He does! Snack money is in his front pocket."),
+         ("h", "Home safe, fed and happy. See you next pickup!")],
+    17: [("r", "Hi Ms. Nair, my mock paper went badly... could we go through it on Saturday?"),
+         ("h", "Bring the paper and your calculator — we'll do the tricky questions first."),
+         ("r", "Thank you!! I'll bring the marking scheme too."),
+         ("h", "Good session today. Redo Q7 to Q9 before next Saturday and you'll be fine.")],
+    19: [("r", "Hi Carmen, Oliver here — keen for another session before my dim sum bet with a colleague."),
+         ("h", "Haha, sure. This week: ordering at the tea restaurant, and the taxi phrases."),
+         ("r", "Exactly what I need. MTR exit B as usual?"),
+         ("h", "Yes. Homework: read the menu I gave you out loud, twice.")],
+    22: [("r", "Vivian, Uncle Wong keeps asking when you're free for tea and the newspapers."),
+         ("h", "Tell him Thursday at 3. I'll bring egg tarts from the bakery on Catchick."),
+         ("r", "He'll be delighted — he already saved you the sudoku section."),
+         ("h", "That man plans better than I do.")],
+    25: [("r", "Tomas, the residents' committee loved the first draft. One change — bigger time, we start at 2pm."),
+         ("h", "Easy. New version with 2pm highlighted, sending tonight."),
+         ("r", "You're fast! Could you do six printed copies too?"),
+         ("h", "Done — dropping them to your mailbox on the way to class tomorrow.")],
+}
+
+# Circle group chat (chain_messages): district -> [(member email, hours_ago, text)]
+GROUP_CHAT = {
+    "Kennedy Town": [
+        ("aisha.rahman.hk@gmail.com", 30, "Morning all! Nice to see our four needs line up so neatly."),
+        ("marcus.cheng88@gmail.com", 26, "Vivian, don't worry about Biscuit — he's gentle once he knows you."),
+        ("vivian.lau.hk@gmail.com", 24, "I used to have a beagle. He'll love Smithfield at sunset."),
+        ("kenwong.cw@gmail.com", 6, "Still deciding between the market pickup and the library run — will pick tonight!"),
+    ],
+    "Sheung Wan": [
+        ("mei.fong.home@gmail.com", 28, "All set for this week — I'll grab the dry cleaning after my market run."),
+        ("oliver.bennett.uk@gmail.com", 22, "The cake tin is on my kitchen bench, Hana. If I'm out, it's in the hallway."),
+        ("hana.ito.jp@gmail.com", 8, "Perfect. Mochi and I will be at the park by 8 — see you all at handover!"),
+    ],
+    "North Point": [
+        ("carmen.sze.np@gmail.com", 30, "My half is sorted — Tuesday prescription pickup is booked with the clinic."),
+        ("raj.patel.work@gmail.com", 25, "I can cover the dvd run if Leo is still stuck in Singapore."),
+        ("leo.ma.np@gmail.com", 4, "Thanks both — Singapore got extended another week. I've filed the withdrawal request, sorry again."),
+    ],
+}
+
+
+def chat_time(days: int, frac: float) -> str:
+    dt = datetime.now(timezone.utc) + timedelta(days=-days + frac)
+    return dt.isoformat(timespec="seconds")
+
 
 def main() -> None:
     for suffix in ("", "-wal", "-shm"):
@@ -149,6 +214,7 @@ def main() -> None:
         mail_to_id = ids
 
         # Completed history (anchors the recommendation benchmarks) ---------
+        hist_ids = []   # request id per HISTORY index, for chat seeding
         for (cat, title, desc, minutes, cx, q, days, h, r) in HISTORY:
             value = price(minutes, cx, q)
             created = now_iso(-days)
@@ -161,12 +227,24 @@ def main() -> None:
                    VALUES (?,?,?,?,?,'completed',?,?,?,?,?,?,?,?,?,?)""",
                 (title, desc, cat, mail_to_id[USERS[r][1]], mail_to_id[USERS[h][1]],
                  value, 1, value, 1, value, minutes, cx, q, created, completed))
+            hist_ids.append(cur.lastrowid)
             conn.execute(
                 """INSERT INTO transactions(request_id,requester_id,provider_id,value,
                        effort_minutes,complexity,quality_score,kudos_given,kudos_bonus,created_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (cur.lastrowid, mail_to_id[USERS[r][1]], mail_to_id[USERS[h][1]],
                  value, minutes, cx, q, 1 if q >= 5 else 0, 1 if q >= 5 else 1, completed))
+
+        # Chat history on completed jobs ------------------------------------
+        for idx, thread in CHATS.items():
+            days, h, r = HISTORY[idx][6], HISTORY[idx][7], HISTORY[idx][8]
+            n = len(thread)
+            for i, (who, body) in enumerate(thread):
+                sender = mail_to_id[USERS[h][1] if who == "h" else USERS[r][1]]
+                conn.execute(
+                    """INSERT INTO messages(request_id,sender_id,kind,body,created_at)
+                       VALUES (?,?,'chat',?,?)""",
+                    (hist_ids[idx], sender, body, chat_time(days, (i + 1) / (n + 1) * 1.8)))
 
         # Open requests, priced by the app's own recommendation -------------
         circle_requests = {}   # district -> [request_id, ...]
@@ -299,6 +377,17 @@ def main() -> None:
                 "I have been posted to Singapore for two weeks with work and cannot "
                 "finish my side of the loop. Sorry everyone.")
             assert case_id, f"NP withdrawal failed: {wmsg}"
+
+        # Circle group chat ---------------------------------------------------
+        for district, msgs in GROUP_CHAT.items():
+            pid = proposals.get(district)
+            if not pid:
+                continue
+            for (email, hours_ago, body) in msgs:
+                ts = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+                conn.execute(
+                    "INSERT INTO chain_messages(proposal_id,sender_id,body,created_at) VALUES (?,?,?,?)",
+                    (pid, ids[email], body, ts))
 
     print("Seed complete.")
     report()
