@@ -95,7 +95,7 @@
 </section>
 
 <section class="home-section">
-  <h2 class="section-title">My rewards</h2>
+  <h2 class="section-title" id="my-rewards-anchor">My rewards</h2>
   <div class="board-tabs" id="rw-tabs">
     <button class="btab active" data-rw-tab="available">Available</button>
     <button class="btab" data-rw-tab="used">Used</button>
@@ -185,7 +185,7 @@
     </div>
     <div class="modal-actions">
       <a class="btn-ghost" href="/history">View history</a>
-      <button class="btn-primary" data-modal-close>View my rewards</button>
+      <button class="btn-primary" id="rw-view-mine">View my rewards</button>
     </div>
   </div>
 </div>
@@ -281,5 +281,10 @@ document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click'
 /* claimed moment */
 const claimed = document.getElementById('rw-claimed');
 if (claimed) claimed.hidden = false;
+const viewMine = document.getElementById('rw-view-mine');
+if (viewMine) viewMine.addEventListener('click', () => {
+  if (claimed) claimed.hidden = true;
+  document.getElementById('my-rewards-anchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
 </script>
 {% endblock %}
