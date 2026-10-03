@@ -17,7 +17,7 @@
 <div class="chat-main card">
   <details class="ws-context">
     <summary>
-      <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
+      <span class="tt-emoji">{{ genre_emoji.get(item.category|lower, '📋') }}</span>
       <span class="tt-body">
         <span class="tt-title">{{ item.title }}</span>
         <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>

@@ -6,8 +6,13 @@
     <h1>Community board</h1>
     <p class="muted">{% if matched_genres %}Tasks matching your skills are starred ★ and listed first. Click any task to see details and offer help.{% else %}Open requests from other residents. <a href="/onboarding/skills?next=/browse">Add your skills</a> to get recommendations.{% endif %}</p>
   </div>
-  <a class="btn-ghost" href="/recommended">★ Recommended for you</a>
 </header>
+
+<div class="board-tabs">
+  <button class="btab active" data-view="foryou">★ For you</button>
+  <button class="btab" data-view="nearby">📍 Nearby{% if user_district %} · {{ user_district }}{% endif %}</button>
+  <button class="btab" data-view="all">All tasks</button>
+</div>
 
 <div class="board-controls">
   <div class="filter-row" id="filter-row">
@@ -18,19 +23,18 @@
   </div>
   <label class="sort-label">Sort
     <select id="sort-select">
-      <option value="match">For you</option>
-      <option value="near">Distance</option>
+      <option value="match">Recommended</option>
+      <option value="near">Distance · nearest first</option>
+      <option value="newest">Newest</option>
       <option value="credits-desc">Credits · high to low</option>
-      <option value="credits-asc">Credits · low to high</option>
       <option value="time-asc">Time needed · short first</option>
-      <option value="time-desc">Time needed · long first</option>
     </select>
   </label>
 </div>
 
 <div class="card-grid" id="board">
 {% for item in community_requests %}
-  <div class="grid-item" data-category="{{ item.category }}" data-credits="{{ item.requester_value }}" data-effort="{{ item.effort_minutes or 30 }}" data-near="{{ 1 if item.location and user_district and item.location.strip().lower() == user_district else 0 }}" data-match="{{ 1 if item.id in matched_ids else 0 }}">{% include "browse_card.html" %}</div>
+  <div class="grid-item" data-category="{{ item.category }}" data-credits="{{ item.requester_value }}" data-effort="{{ item.effort_minutes or 30 }}" data-near="{{ 1 if item.location and user_district and item.location.strip().lower() == user_district else 0 }}" data-match="{{ 1 if item.id in matched_ids else 0 }}" data-id="{{ item.id }}">{% include "browse_card.html" %}</div>
 {% else %}
   <div class="card empty-card"><p class="empty">No open requests from other residents right now. Check back soon.</p></div>
 {% endfor %}
@@ -41,31 +45,45 @@
 const chips = document.querySelectorAll(".filter-chip");
 const board = document.querySelector("#board");
 const sortSelect = document.querySelector("#sort-select");
+const btabs = document.querySelectorAll(".btab");
+let view = "foryou", filter = "all";
 function items() { return [...board.querySelectorAll(".grid-item")]; }
-function applyFilter(filter) {
-  items().forEach(el => {
-    el.style.display = (filter === "all" || el.dataset.category === filter) ? "" : "none";
-  });
+function rank(el, key) {
+  const d = (k) => Number(el.dataset[k] || 0);
+  if (key === "match") return d("match") * 100 + d("near") * 10;
+  if (key === "near") return d("near") * 100 + d("match") * 10;
+  if (key === "credits-desc") return d("credits");
+  if (key === "time-asc") return -d("effort");
+  if (key === "newest") return -d("id");
+  return 0;
 }
-function applySort(key) {
-  const sorted = items().sort((a, b) => {
-    const d = (k) => Number(b.dataset[k]) - Number(a.dataset[k]);
-    if (key === "match") return d("match") || d("near") || d("credits");
-    if (key === "near") return d("near") || d("credits");
-    if (key === "credits-desc") return d("credits");
-    if (key === "credits-asc") return -d("credits");
-    if (key === "time-asc") return -d("effort");
-    if (key === "time-desc") return d("effort");
-    return 0;
+function render() {
+  const sortKey = view === "nearby" ? "near" : (view === "all" && sortSelect.value === "match" ? "newest" : sortSelect.value);
+  const visible = items().filter(el => {
+    if (filter !== "all" && el.dataset.category !== filter) { el.style.display = "none"; return false; }
+    if (view === "nearby" && el.dataset.near !== "1" && items().some(x => x.dataset.near === "1")) { el.style.display = "none"; return false; }
+    el.style.display = "";
+    return true;
   });
-  sorted.forEach(el => board.appendChild(el));
+  visible.sort((a, b) => rank(b, sortKey) - rank(a, sortKey) || Number(b.dataset.id) - Number(a.dataset.id));
+  visible.forEach(el => board.appendChild(el));
+  const empty = document.getElementById("nearby-empty");
+  if (empty) empty.style.display = (view === "nearby" && visible.length === 0) ? "" : "none";
 }
+btabs.forEach(t => t.addEventListener("click", () => {
+  btabs.forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  view = t.dataset.view;
+  sortSelect.value = view === "all" ? "newest" : (view === "nearby" ? "near" : "match");
+  render();
+}));
 chips.forEach(chip => chip.addEventListener("click", () => {
   chips.forEach(c => c.classList.remove("active"));
   chip.classList.add("active");
-  applyFilter(chip.dataset.filter);
+  filter = chip.dataset.filter;
+  render();
 }));
-sortSelect.addEventListener("change", () => applySort(sortSelect.value));
-applySort("match");
+sortSelect.addEventListener("change", render);
+render();
 </script>
 {% endblock %}

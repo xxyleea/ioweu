@@ -688,7 +688,7 @@ STAGE_MAP = {
     "open": 0, "negotiating": 0, "agreement_pending": 0,
     "confirmed": 1, "scheduled": 1,
     "in_progress": 2,
-    "completion_submitted": 3, "completed": 3, "resolved": 3,
+    "completion_submitted": 3, "completed_pending_release": 3, "completed": 3, "resolved": 3,
     "disputed": 4, "human_review": 4,
 }
 
@@ -939,6 +939,26 @@ def home(request: Request):
             "SELECT * FROM notifications WHERE user_id=? AND is_read=0 AND kind='action' ORDER BY created_at DESC LIMIT 5",
             (user["id"],)).fetchall()
         action_count = sum(1 for e in exchanges if e["needs"])
+        user_skills = [x for x in (user["skills"] or "").split(",") if x]
+        matched_genres = {g for g, subs in SKILL_TREE.items() if any(x in subs for x in user_skills)}
+        open_others = [i for i in requests if i["requester_id"] != user["id"] and i["provider_id"] is None]
+        user_district = (user["district"] or "").strip().lower()
+        open_others.sort(key=lambda i: (
+            i["category"] not in matched_genres,
+            not (i["location"] and user_district and i["location"].strip().lower() == user_district),
+            -i["id"]))
+        recommended_tasks = open_others[:6]
+        matched_ids = {i["id"] for i in open_others if i["category"] in matched_genres}
+        counts = {
+            "my_open": sum(1 for i in requests if i["requester_id"] == user["id"] and i["status"] not in ("completed", "resolved")),
+            "helping": sum(1 for i in requests if i["provider_id"] == user["id"] and i["status"] not in ("completed", "resolved")),
+        }
+        activity = connection.execute(
+            """SELECT t.created_at, t.value agreed_value, t.kudos_bonus, r.title,
+                      ru.name requester_name, pu.name provider_name
+               FROM transactions t JOIN requests r ON r.id=t.request_id
+               JOIN users ru ON ru.id=t.requester_id JOIN users pu ON pu.id=t.provider_id
+               ORDER BY t.created_at DESC LIMIT 6""").fetchall()
         history = load_history(connection, user["id"])
         disputes = load_disputes(connection)
         ledger = connection.execute(
@@ -973,6 +993,10 @@ def home(request: Request):
         action_notifs=action_notifs,
         action_count=action_count,
         pinned_ids=pinned_ids,
+        recommended_tasks=recommended_tasks,
+        matched_ids=matched_ids,
+        counts=counts,
+        activity=activity,
         history=history,
         disputes=disputes,
         ledger=ledger,
@@ -980,6 +1004,7 @@ def home(request: Request):
         recommendations=recommendations,
         stats=stats,
         task_categories=TASK_CATEGORIES,
+        genre_emoji=GENRE_EMOJI,
     )
 
 
@@ -1309,28 +1334,8 @@ def browse(request: Request):
 
 
 @app.get("/recommended", response_class=HTMLResponse)
-def recommended_tasks(request: Request):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    with db() as connection:
-        requests, recommendations = load_board(connection)
-    user_skills = [s for s in (user["skills"] or "").split(",") if s]
-    matched_genres = {g for g, subs in SKILL_TREE.items() if any(s in subs for s in user_skills)}
-    items = [
-        item for item in requests
-        if item["requester_id"] != user["id"] and item["provider_id"] is None
-        and item["category"] in matched_genres
-    ]
-    items.sort(key=lambda item: (item["urgency"] != "urgent", item["created_at"]), reverse=False)
-    return render(
-        request, "recommended.html", page="browse",
-        community_requests=items, recommendations=recommendations,
-        matched_ids={item["id"] for item in items}, matched_genres=matched_genres,
-        task_categories=TASK_CATEGORIES, genre_emoji=GENRE_EMOJI,
-        user_area=user["district"] or user["address_id"] or "",
-        user_district=(user["district"] or "").strip().lower(),
-    )
+def recommended_page(request: Request):
+    return RedirectResponse("/browse", status_code=303)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -2073,10 +2078,15 @@ def confirm_exchange(request: Request, request_id: int):
             agreed = item["agreed_value"]
             requester = connection.execute("SELECT balance FROM users WHERE id=?",
                                            (item["requester_id"],)).fetchone()
+            if requester["balance"] < 0:
+                return render(request, "error.html", message=(
+                    f"The requester's balance is negative ({requester['balance']} credits). "
+                    "They need to earn credits back above 0 before starting a new exchange."
+                ))
             if requester["balance"] - agreed < MIN_BALANCE:
                 return render(request, "error.html", message=(
                     f"The requester doesn't have enough available credits for this exchange "
-                    f"({requester['balance']} available, {agreed} needed). Please renegotiate a lower value in the chat."
+                    f"({requester['balance']} available, {agreed} needed, floor is {MIN_BALANCE}). Please renegotiate a lower value in the chat."
                 ))
             connection.execute(
                 "UPDATE users SET balance=balance-?, held_balance=held_balance+? WHERE id=?",

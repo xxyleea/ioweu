@@ -2,24 +2,24 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{% block title %}IoU{% endblock %}</title><link rel="icon" href="/favicon.ico"><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="/static/style.css"></head>
 <body class="app-body">
 <nav class="sidebar">
-  <a class="brand" href="/"><span class="brand-dot"></span>IoU</a>
-  <a class="bell {% if page == 'notifications' %}active{% endif %}" href="/notifications" title="Notifications">🔔{% if unread_notifs or unread_msgs %}<span class="bell-badge">{{ (unread_notifs or 0) + (unread_msgs or 0) }}</span>{% endif %}</a>
-  <p class="brand-tag">Small favours,<br>fair credit.</p>
+  <div class="brand-row">
+    <a class="brand" href="/"><img class="brand-logo" src="/static/iou-logo.png" alt="IoU logo">IoU</a>
+    <a class="bell {% if page == 'notifications' %}active{% endif %}" href="/notifications" title="Notifications">🔔{% if unread_notifs or unread_msgs %}<span class="bell-badge">{{ (unread_notifs or 0) + (unread_msgs or 0) }}</span>{% endif %}</a>
+  </div>
+  <p class="brand-tag">Help Comes Full Circle.</p>
+  <a class="side-user" href="/account" title="Your account">
+    <div class="avatar">{{ user.name[0] }}</div>
+    <div class="sidebar-user-meta"><b>{{ user.name }}</b><small>{{ user.email }}</small></div>
+    <span class="side-user-arrow">→</span>
+  </a>
   <div class="nav-links">
     <a class="nav-link {% if page == 'home' %}active{% endif %}" href="/"><span class="nav-ico">⌂</span>Home</a>
-    <a class="nav-link {% if page == 'posts' %}active{% endif %}" href="/my-posts"><span class="nav-ico">✎</span>Get help</a>
-    <a class="nav-link {% if page == 'helping' %}active{% endif %}" href="/helping"><span class="nav-ico">♥</span>Help others</a>
     <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Community</a>
     <a class="nav-link {% if page == 'messages' %}active{% endif %}" href="/messages"><span class="nav-ico">✉</span>Messages{% if unread_msgs %}<span class="unread-dot"></span>{% endif %}</a>
     <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help"><span class="nav-ico">?</span>Help</a>
-    <a class="nav-link {% if page == 'account' %}active{% endif %}" href="/account"><span class="nav-ico">☺</span>Account</a>
-    <a class="nav-link {% if page == 'home' %}active{% endif %}" href="/chain-invitations"><span class="nav-ico">🔄</span>Chains</a>
+    <a class="nav-link {% if page == 'account' %}active{% endif %}" href="/account"><span class="nav-ico">⚙</span>Settings</a>
   </div>
-  <div class="sidebar-user">
-    <div class="avatar">{{ user.name[0] }}</div>
-    <div class="sidebar-user-meta"><b>{{ user.name }}</b><small>{{ user.email }}</small></div>
-    <form method="post" action="/logout"><button class="link-button" title="Sign out">⏻</button></form>
-  </div>
+  <form method="post" action="/logout" class="side-logout"><button class="link-button" title="Sign out">⏻ Sign out</button></form>
 </nav>
 <main class="content {% block content_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 <div class="toast" id="toast" hidden></div>
