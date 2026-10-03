@@ -57,14 +57,17 @@ function rank(el, key) {
   return 0;
 }
 function render() {
-  const sortKey = view === "nearby" ? "near" : (view === "all" && sortSelect.value === "match" ? "newest" : sortSelect.value);
+  const sortKey = sortSelect.value;
   const visible = items().filter(el => {
     if (filter !== "all" && el.dataset.category !== filter) { el.style.display = "none"; return false; }
     if (view === "nearby" && el.dataset.near !== "1" && items().some(x => x.dataset.near === "1")) { el.style.display = "none"; return false; }
     el.style.display = "";
     return true;
   });
-  visible.sort((a, b) => rank(b, sortKey) - rank(a, sortKey) || Number(b.dataset.id) - Number(a.dataset.id));
+  visible.sort((a, b) => {
+    if (view === "foryou" && a.dataset.match !== b.dataset.match) return Number(b.dataset.match) - Number(a.dataset.match);
+    return rank(b, sortKey) - rank(a, sortKey) || Number(b.dataset.id) - Number(a.dataset.id);
+  });
   visible.forEach(el => board.appendChild(el));
   const empty = document.getElementById("nearby-empty");
   if (empty) empty.style.display = (view === "nearby" && visible.length === 0) ? "" : "none";
@@ -73,8 +76,6 @@ btabs.forEach(t => t.addEventListener("click", () => {
   btabs.forEach(x => x.classList.remove("active"));
   t.classList.add("active");
   view = t.dataset.view;
-  sortSelect.value = view === "nearby" ? "near" : "newest";
-  sortSelect.closest(".sort-label").style.visibility = view === "foryou" ? "hidden" : "visible";
   render();
 }));
 chips.forEach(chip => chip.addEventListener("click", () => {
@@ -84,7 +85,6 @@ chips.forEach(chip => chip.addEventListener("click", () => {
   render();
 }));
 sortSelect.addEventListener("change", render);
-sortSelect.closest(".sort-label").style.visibility = "hidden";
 render();
 </script>
 {% endblock %}
