@@ -1042,3 +1042,7 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
 /* ---------- breathing room between stacked page cards ---------- */
 .content>.card{margin-bottom:1.4rem}
 .exchange-row{background:var(--bg);border-radius:14px}
+
+/* ---------- toolbar actions: crisper than default ghost ---------- */
+.chat-toolbar>.btn-ghost,.chat-toolbar form button{border-color:rgba(35,39,43,.45);color:var(--ink);font-weight:700}
+.chat-toolbar>.btn-ghost:hover{border-color:var(--ink)}

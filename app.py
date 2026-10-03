@@ -2140,6 +2140,8 @@ def community_page(request: Request, cid: int | None = Query(None),
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if not request.query_params.get("preview"):
+        return RedirectResponse("/", status_code=303)
     with db() as connection:
         ensure_location_community(connection, user)
         communities = my_communities(connection, user["id"])
