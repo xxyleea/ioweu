@@ -89,6 +89,23 @@
   </div>
 </section>
 
+{% if communities %}
+<section class="home-section">
+  <div class="comm-snapshot card">
+    <div class="cs-jar" aria-hidden="true">
+      <div class="cs-jar-glass"><div class="cs-jar-water" style="height:{{ communities[0].water_level }}%"></div></div>
+    </div>
+    <div class="cs-body">
+      <small class="muted">{{ "Your neighbourhood" if communities[0].kind == "location" else "Your community" }}</small>
+      <b>{{ communities[0].name }}</b>
+      <small class="muted">{{ communities[0].member_count }} neighbours · {{ communities[0].exchanges }} exchanges · jar {{ communities[0].water_level }}%</small>
+      <a class="cs-link" href="/community?cid={{ communities[0].id }}">Visit community →</a>
+    </div>
+    {% if communities|length > 1 %}<small class="muted cs-more">+{{ communities|length - 1 }} more</small>{% endif %}
+  </div>
+</section>
+{% endif %}
+
 <div class="home-2col">
 <div class="home-col">
 {% if action_count %}

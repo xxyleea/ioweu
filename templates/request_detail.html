@@ -5,7 +5,7 @@
 <header class="page-head">
   <div>
     <a class="btn-ghost btn-back" href="javascript:history.back()">← Back</a>
-    <h1 style="margin-top:.8rem">{{ item.title }} <span class="status s-{{ item.status }} title-status">{{ status_label }}</span></h1>
+    <h1 style="margin-top:.8rem">{{ item.title }} <span class="status s-{{ item.status }} title-status">{{ status_label }}</span>{% if item.visibility == 'community' %}<span class="comm-chip" title="Only visible to this community">🏘 community only</span>{% endif %}</h1>
     <p class="muted">{{ item.category }} · requested by {{ item.requester_name }}{% if item.provider_name %} · helper {{ item.provider_name }}{% endif %}{% if item.location %} · 📍 {{ item.location }}{% endif %}{% if item.preferred_time %} · 🕒 meetup {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %} · ⏰ needed by {{ item.needed_by }}{% endif %}</p>
     {% if item.circle_id %}<p class="circle-tag">↻ Part of a Circle — no credits are exchanged for this task.</p>{% endif %}
   </div>

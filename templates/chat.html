@@ -20,6 +20,21 @@
 </aside>
 
 <div class="chat-main card">
+  {% if connected %}
+  <div class="connect-overlay" id="connect-overlay">
+    <div class="connect-stage">
+      <p class="connect-kicker">You both confirmed</p>
+      <div class="connect-pair">
+        <span class="connect-av mine">{{ user.name[0] }}</span>
+        <span class="connect-dot" id="connect-dot"></span>
+        <span class="connect-av other">{{ (item.provider_name if item.requester_id == user.id else item.requester_name)[0] }}</span>
+      </div>
+      <p class="connect-label" id="connect-label">Tap to connect</p>
+      <p class="connect-sub" id="connect-sub">Two neighbours, one small exchange.</p>
+      <button class="btn-primary" id="connect-done" hidden>Continue →</button>
+    </div>
+  </div>
+  {% endif %}
   <details class="chat-menu">
     <summary title="More options">⋯</summary>
     <div class="chat-menu-pop">
@@ -350,5 +365,34 @@ if (meetOnline) {
   });
 }
 window.addEventListener('load', () => { if (bodyInput) bodyInput.focus(); });
+/* mutual-confirm connect moment */
+const overlay = document.getElementById('connect-overlay');
+if (overlay) {
+  const label = document.getElementById('connect-label');
+  const sub = document.getElementById('connect-sub');
+  const done = document.getElementById('connect-done');
+  const dot = document.getElementById('connect-dot');
+  const arm = () => {
+    overlay.classList.add('armed');
+    label.textContent = 'Tap to connect';
+  };
+  setTimeout(arm, 400);
+  overlay.addEventListener('click', () => {
+    if (!overlay.classList.contains('armed') || overlay.classList.contains('done')) return;
+    overlay.classList.add('done');
+    dot.classList.add('burst');
+    label.textContent = 'Connected.';
+    sub.textContent = 'Your exchange is now confirmed.';
+    done.hidden = false;
+    if (navigator.vibrate) navigator.vibrate(30);
+  }, { once: false });
+  done.addEventListener('click', (e) => {
+    e.stopPropagation();
+    overlay.remove();
+    const url = new URL(location.href);
+    url.searchParams.delete('connected');
+    history.replaceState(null, '', url.pathname + (url.search ? '?' + url.search : ''));
+  });
+}
 </script>
 {% endblock %}
