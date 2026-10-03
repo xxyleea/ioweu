@@ -717,10 +717,6 @@ def remove_task_from_circle(connection: sqlite3.Connection, circle_id: int, requ
     invalidate_start_proposal(connection, circle_id)
     notify(connection, member["user_id"],
            "Your task was accepted normally, so it left this Circle.", "/browse", kind="info")
-    if len(circle_member_rows(connection, circle_id)) < CIRCLE_MIN_MEMBERS:
-        dissolve_circle(connection, circle_id,
-                        "This Circle no longer has enough neighbours to form a loop. "
-                        "Your task is available normally again.")
 
 
 def expire_circles(connection: sqlite3.Connection) -> None:
@@ -766,10 +762,9 @@ def expire_circles(connection: sqlite3.Connection) -> None:
             changed = True
         if changed:
             invalidate_start_proposal(connection, circle_id)
-        if len(circle_member_rows(connection, circle_id)) < CIRCLE_MIN_MEMBERS:
-            dissolve_circle(connection, circle_id,
-                            "This Circle no longer has enough neighbours to form a loop. "
-                            "Your task is available normally again.")
+        # No min-members dissolve here: a voluntary leave must return the leaver
+        # to the starting state (home notif + rejoinable Circle), so a forming
+        # Circle only ends via the 72-hour expiry above.
 
 
 def circle_progress(connection: sqlite3.Connection, proposal_id: int) -> dict[str, int]:
@@ -2681,7 +2676,7 @@ def home(request: Request):
         circle_invite = None
         circle_invite_rejoin = False
         if user["circle_enabled"]:
-            circle_invite = connection.execute(
+            invites = connection.execute(
                 """SELECT cp.*,
                       (SELECT COUNT(*) FROM chain_members m2 WHERE m2.proposal_id=cp.id
                          AND m2.response!='declined'
@@ -2696,8 +2691,16 @@ def home(request: Request):
                                  AND (x.response='pending'
                                       OR (x.response='declined'
                                           AND x.removal_reason=?)))
-                   ORDER BY cp.created_at DESC LIMIT 1""",
-                (user["id"], CIRCLE_LEFT_PENDING)).fetchone()
+                   ORDER BY cp.created_at DESC""",
+                (user["id"], CIRCLE_LEFT_PENDING)).fetchall()
+            # A Circle the user left after joining gets top billing: leaving must
+            # return them to the starting state with that Circle's notif back.
+            circle_invite = next(
+                (p for p in invites
+                 if member_row(connection, p["id"], user["id"]) is None
+                 and member_row(connection, p["id"], user["id"],
+                                include_removed=True)["removal_reason"] == CIRCLE_LEFT_PENDING),
+                invites[0] if invites else None)
             if circle_invite:
                 mine = connection.execute(
                     "SELECT response FROM chain_members WHERE proposal_id=? AND user_id=?",
@@ -2907,7 +2910,10 @@ def chain_review(request: Request, proposal_id: int):
         expires_in = ""
         if circle["expires_at"] and circle["status"] in ("pending", "start_confirming"):
             try:
-                left = datetime.fromisoformat(circle["expires_at"]) - datetime.now(timezone.utc)
+                left = datetime.fromisoformat(circle["expires_at"])
+                if left.tzinfo is None:
+                    left = left.replace(tzinfo=timezone.utc)
+                left = left - datetime.now(timezone.utc)
                 if left.total_seconds() > 0:
                     hours, minutes = divmod(int(left.total_seconds() // 60), 60)
                     expires_in = f"{left.days}d {hours}h {minutes}m"
@@ -3052,9 +3058,8 @@ def chain_respond(request: Request, proposal_id: int, response: str = Form(...))
                     notify(connection, member["user_id"],
                            f"{user['name']} left this Circle suggestion.",
                            f"/chains/{proposal_id}", kind="info")
-            if len(circle_member_rows(connection, proposal_id)) < CIRCLE_MIN_MEMBERS:
-                dissolve_circle(connection, proposal_id,
-                                "This Circle no longer has enough neighbours to form a loop.")
+            # Leaving never dissolves a forming Circle: the invited others keep it,
+            # and the leaver's home banner returns so they can rejoin (starting state).
             # Back home — the banner there reflects the new state.
             return redirect_toast("/", "You left this Circle suggestion."
                                   if had_joined else
