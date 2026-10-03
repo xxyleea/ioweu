@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}IoU · Circle recovery{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><a class="btn-ghost btn-back" href="/chains/{{ proposal.id }}">← Circle #{{ proposal.id }}</a>
+    <h1 style="margin-top:.8rem">Circle recovery</h1>
+    <p class="muted">{{ names.leaver }} cannot complete their Circle commitment.</p></div>
+</header>
+
+<section class="card alert-card">
+  <h2>What happened</h2>
+  <p class="loop-line">{{ names.predecessor }} → {{ names.leaver }} → {{ names.successor }}</p>
+  <ul class="profile-meta compact">
+    <li><small>Leaver</small><b>{{ names.leaver }}</b></li>
+    <li><small>Predecessor</small><b>{{ names.predecessor }}</b></li>
+    <li><small>Successor</small><b>{{ names.successor }}</b></li>
+    <li><small>Received help</small><b>{{ 'Yes' if case.leaver_received_help else 'No' }}</b></li>
+    <li><small>Completed own help</small><b>{{ 'Yes' if case.leaver_completed_help else 'No' }}</b></li>
+  </ul>
+  {% if case.reason %}<p class="muted">Reason given: “{{ case.reason }}”</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Choose what happens next</h2>
+  <p class="muted">IoU tries to restore the loop first. Credits are the fallback, never the default.</p>
+
+  <div class="modal-actions">
+    <form method="post" action="/chains/{{ proposal.id }}/recovery/{{ case.id }}/choose">
+      <input type="hidden" name="choice" value="break">
+      <button class="btn-ghost danger" onclick="return confirm('Break this Circle? Completed work stays recorded.')">Break Circle</button>
+    </form>
+  </div>
+</section>
+
+{% if replacement_options %}
+<section class="card">
+  <h2>Option 1 — Find a replacement</h2>
+  <p class="muted">A neighbour brings their own task into the Circle and takes over {{ names.leaver }}'s commitment.</p>
+  {% for option in replacement_options %}
+  <form method="post" action="/chains/{{ proposal.id }}/recovery/{{ case.id }}/choose" class="inline-form">
+    <input type="hidden" name="choice" value="replace">
+    <input type="hidden" name="replacement_user_id" value="{{ option.requester_id }}">
+    <button class="btn-ghost btn-sm">{{ option.owner_name }} — “{{ option.title }}” ({{ option.requester_value }} credits)</button>
+  </form>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if am_predecessor %}
+<section class="card">
+  <h2>Option 2 — You take over directly</h2>
+  <p class="muted">Can you help {{ names.successor }} instead? That bypasses {{ names.leaver }} and keeps the loop closed.</p>
+  <form method="post" action="/chains/{{ proposal.id }}/recovery/{{ case.id }}/choose">
+    <input type="hidden" name="choice" value="redistribute">
+    <button class="btn-primary">Yes, I can take {{ names.successor }}'s task</button>
+  </form>
+  <form method="post" action="/chains/{{ proposal.id }}/recovery/{{ case.id }}/choose" style="margin-top:.5rem">
+    <input type="hidden" name="choice" value="credit_settlement">
+    <button class="btn-ghost">No, settle with credits instead ({{ successors_value }} credits)</button>
+  </form>
+</section>
+{% else %}
+<section class="card">
+  <h2>Option 2 — Redistribute inside the Circle</h2>
+  <p class="muted">{{ names.predecessor }} is being asked whether they can help {{ names.successor }} directly.
+    If not, the delivered help is settled with {{ successors_value }} credits so nobody is left unpaid.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>What this costs</h2>
+  <ul class="simple-list">
+    <li>Reliability penalty for leaving an active Circle:
+      <b>{{ -10 if case.leaver_received_help else -5 }}</b></li>
+    {% if case.leaver_received_help and not case.leaver_completed_help %}
+    <li>Circle breach credit penalty: the leaver's own task value, split 50/50 between
+      {{ names.predecessor }} and {{ names.successor }}. This may take their balance below the normal
+      spending floor until they rebalance it.</li>
+    {% else %}
+    <li>No credit penalty — {{ names.leaver }} had not received help yet, so the remaining work is simply
+      redistributed.</li>
+    {% endif %}
+  </ul>
+</section>
+{% endblock %}

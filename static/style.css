@@ -870,6 +870,21 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .consent-block{border:1px solid var(--border);border-radius:12px;padding:.9rem 1rem;background:var(--surface-2, #f7f5f0)}
 .consent-block .field-label{margin-bottom:.4rem}
 
+/* ---------- Circle: loop visual, task cards, assignments, recovery ---------- */
+.loop-line{font-size:1rem;font-weight:700;letter-spacing:.02em;margin:.4rem 0}
+.loop-visual{display:flex;flex-direction:column;gap:.35rem;margin:.8rem 0}
+.loop-step{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;background:var(--surface-2,#f7f5f0);border-radius:10px;padding:.45rem .7rem}
+.loop-arrow{color:#378add;font-size:.8rem;font-weight:700}
+.circle-task-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem}
+.circle-task-card h3{font-size:1rem;margin:.2rem 0}
+.circle-task-card.selected{outline:2px solid #378add}
+.circle-task-card.own{background:var(--surface-2,#f7f5f0)}
+.circle-task-card .btn-primary,.circle-task-card .btn-ghost{margin-top:.6rem;width:100%}
+.profile-meta.compact{display:grid;grid-template-columns:1fr 1fr;gap:.2rem .8rem;font-size:.82rem;margin:.5rem 0}
+.assign-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:.8rem}
+.assign-card{box-shadow:none;border:1px solid var(--border)}
+.assign-card p{display:flex;justify-content:space-between;gap:.6rem;margin:.15rem 0;font-size:.85rem}
+.assign-card small{color:var(--muted)}
 /* ---------- form text should not inherit label bold ---------- */
 input,textarea,select{font-weight:400}
 
