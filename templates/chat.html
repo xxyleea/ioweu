@@ -82,25 +82,27 @@
 </div>
 
 <div class="chat-toolbar">
-  {% if item.status == 'completion_submitted' and item.requester_id == user.id %}
-  <button class="btn-ghost" data-modal-open="review-modal">Review completion</button>
+  {# exactly one action per status — no duplicates, no gaps #}
+  {% if item.status == 'open' and item.requester_id != user.id %}
+  <button class="btn-ghost" data-modal-open="offer-modal">💰 Make an offer</button>
+  {% elif item.status == 'confirmed' %}
+  <button class="btn-ghost" data-modal-open="meetup-modal">📅 Propose Meetup</button>
+  {% elif item.status == 'scheduled' %}
+  <button class="btn-ghost" data-modal-open="start-task-modal">▶ Start Task</button>
   {% elif item.status == 'agreement_pending' and (item.requester_id == user.id or item.provider_id == user.id) %}
-  <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-ghost">Confirm Exchange</button></form>
-  {% elif hero.actor == 'you' and hero.action %}
-    {% if hero.action.modal %}
-    <button class="btn-ghost" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
-    {% else %}
-    <a class="btn-ghost" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
-    {% endif %}
-  {% endif %}
-  {% if item.status == 'in_progress' and item.provider_id == user.id %}
+  <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-ghost">🤝 Confirm Exchange</button></form>
+  {% elif item.status == 'in_progress' and item.provider_id == user.id %}
   <button class="btn-ghost" data-modal-open="complete-modal">✔ Mark as Complete</button>
-  {% endif %}
-  {% if item.status == 'disputed' %}
+  {% elif item.status == 'completion_submitted' and item.requester_id == user.id %}
+  <button class="btn-ghost" data-modal-open="review-modal">🔍 Review completion</button>
+  {% elif item.status == 'disputed' %}
   <button class="btn-ghost" data-modal-open="settlement-modal">⚖️ Suggest a resolution</button>
-  <span class="toolbar-note">No agreement within 3 days → IoU proposes a Fair Resolution.</span>
   {% elif item.status == 'mediation' %}
   <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">⚖️ Review IoU's Fair Resolution</a>
+  {% endif %}
+  {% if item.status == 'disputed' %}
+  <span class="toolbar-note">No agreement within 3 days → IoU proposes a Fair Resolution.</span>
+  {% elif item.status == 'mediation' %}
   <span class="toolbar-note">Both participants must accept within 1 day, otherwise a moderator decides.</span>
   {% elif item.status == 'human_review' %}
   <span class="toolbar-note">A community moderator is making the final decision. Credits stay frozen.</span>
