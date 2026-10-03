@@ -237,6 +237,8 @@ MEMBER_FULFILLED = "fulfilled"
 MEMBER_WITHDRAWAL_REQUESTED = "withdrawal_requested"
 MEMBER_REMOVED = "removed"
 MEMBER_GONE = (MEMBER_REMOVED,)
+# removal_reason values that still let the Circle banner invite the member back.
+CIRCLE_LEFT_PENDING = "left_pending_circle"
 # Spec 45: withdrawal reliability penalties (configurable).
 CIRCLE_WITHDRAW_BEFORE_HELP = -5
 CIRCLE_WITHDRAW_AFTER_HELP = -10
@@ -2673,18 +2675,34 @@ def home(request: Request):
                    WHERE provider_id=? AND status IN ('confirmed','scheduled','in_progress','completion_submitted')""",
                 (user["id"],)).fetchone()["s"],
         }
-        # Spec 10: a Circle banner when compatible needs can form a loop nearby.
+        # Spec 10/43: a Circle banner when compatible needs can form a loop nearby.
+        # The banner returns for a member who *left after joining* (they can still
+        # rejoin), but stays hidden for someone who said "not interested" up front.
         circle_invite = None
+        circle_invite_rejoin = False
         if user["circle_enabled"]:
             circle_invite = connection.execute(
-                """SELECT cp.*, COUNT(cm.user_id) member_count,
-                          COALESCE(SUM(cm.response='accepted'),0) accepted_count
-                   FROM chain_proposals cp JOIN chain_members cm ON cm.proposal_id=cp.id
+                """SELECT cp.*,
+                      (SELECT COUNT(*) FROM chain_members m2 WHERE m2.proposal_id=cp.id
+                         AND m2.response!='declined'
+                         AND COALESCE(m2.status,'pending')!='removed') member_count,
+                      (SELECT COUNT(*) FROM chain_members m2 WHERE m2.proposal_id=cp.id
+                         AND m2.response='accepted'
+                         AND COALESCE(m2.status,'pending')!='removed') accepted_count
+                   FROM chain_proposals cp
                    WHERE cp.status='pending'
                      AND EXISTS (SELECT 1 FROM chain_members x WHERE x.proposal_id=cp.id
-                                 AND x.user_id=? AND x.response='pending')
-                   GROUP BY cp.id ORDER BY cp.created_at DESC LIMIT 1""",
-                (user["id"],)).fetchone()
+                                 AND x.user_id=?
+                                 AND (x.response='pending'
+                                      OR (x.response='declined'
+                                          AND x.removal_reason=?)))
+                   ORDER BY cp.created_at DESC LIMIT 1""",
+                (user["id"], CIRCLE_LEFT_PENDING)).fetchone()
+            if circle_invite:
+                mine = connection.execute(
+                    "SELECT response FROM chain_members WHERE proposal_id=? AND user_id=?",
+                    (circle_invite["id"], user["id"])).fetchone()
+                circle_invite_rejoin = bool(mine and mine["response"] == "declined")
         tier = user_tier(user)
         score = user_reliability(user)
         communities = my_communities(connection, user["id"])
@@ -2704,6 +2722,7 @@ def home(request: Request):
         page="home",
         active_items=active_items,
         circle_invite=circle_invite,
+        circle_invite_rejoin=circle_invite_rejoin,
         standing=standing,
         circles_done=circles_done,
         exchanges=exchanges,
@@ -2964,13 +2983,18 @@ def chain_respond(request: Request, proposal_id: int, response: str = Form(...))
         if not me:
             return redirect_toast(f"/chains/{proposal_id}", "You are not part of this Circle.")
         if response == "declined":
+            # Leaving after joining still invites the member back on the home page;
+            # an up-front "not interested" only dismisses the banner.
+            had_joined = me["response"] == "accepted" or me["selected_request_id"] is not None
+            reason = CIRCLE_LEFT_PENDING if had_joined else "not_interested"
             if me["selected_request_id"]:
                 deselect_circle_task(connection, proposal_id, user["id"])
             invalidate_start_proposal(connection, proposal_id)
             connection.execute(
-                """UPDATE chain_members SET response='declined', responded_at=?, status=?
+                """UPDATE chain_members SET response='declined', responded_at=?, status=?,
+                       removed_at=?, removal_reason=?
                    WHERE proposal_id=? AND user_id=?""",
-                (now(), MEMBER_REMOVED, proposal_id, user["id"]))
+                (now(), MEMBER_REMOVED, now(), reason, proposal_id, user["id"]))
             connection.execute(
                 """UPDATE requests SET reservation_status=?, selected_by_user_id=NULL,
                        circle_id=NULL WHERE id=? AND reservation_status IN (?,?)""",

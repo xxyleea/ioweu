@@ -12,10 +12,15 @@
 <section class="card circle-banner">
   <span class="circle-spin">↻</span>
   <div>
+    {% if circle_invite_rejoin %}
+    <b>You left a Circle that is still forming</b>
+    <p class="muted">Circle #{{ circle_invite.id }} has {{ circle_invite.member_count }} neighbours and is still waiting for a loop. You can rejoin any time before it activates.</p>
+    {% else %}
     <b>A Circle may be forming near you</b>
     <p class="muted">{{ circle_invite.member_count }} nearby tasks have similar values and compatible timing. Help someone. Receive help. No credits exchanged.</p>
+    {% endif %}
   </div>
-  <a class="btn-primary" href="/chains/{{ circle_invite.id }}">Explore Circle</a>
+  <a class="btn-primary" href="/chains/{{ circle_invite.id }}">{% if circle_invite_rejoin %}Reopen Circle{% else %}Explore Circle{% endif %}</a>
 </section>
 {% endif %}
 
