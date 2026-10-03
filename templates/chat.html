@@ -11,7 +11,7 @@
     <span class="thread-av">{{ p.name[0]|upper }}</span>
     <span class="thread-body">
       <span class="thread-top"><b>{{ p.name }}</b><small>{{ p.last_at|hktime }}</small></span>
-      <span class="thread-preview">{{ p.last_body or 'No messages yet' }}</span>
+      <span class="thread-preview">{% if p.last_body %}{{ p.last_body }}{% elif p.last_attachment %}📎 Sent a file{% else %}No messages yet{% endif %}</span>
     </span>
   </a>
   {% else %}

@@ -2634,12 +2634,14 @@ def chat_page(request: Request, request_id: int, with_id: int | None = Query(Non
             """SELECT u.id, u.name,
                       (SELECT body FROM messages m WHERE m.request_id=? AND m.sender_id=u.id
                         ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_body,
+                      (SELECT attachment FROM messages m WHERE m.request_id=? AND m.sender_id=u.id
+                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_attachment,
                       (SELECT created_at FROM messages m WHERE m.request_id=? AND m.sender_id=u.id
                         ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_at
                FROM messages m2 JOIN users u ON u.id=m2.sender_id
                WHERE m2.request_id=? AND m2.sender_id IS NOT NULL AND m2.sender_id != ?
                GROUP BY u.id ORDER BY last_at DESC""",
-            (request_id, request_id, request_id, user["id"]),
+            (request_id, request_id, request_id, request_id, user["id"]),
         ).fetchall()
         other_uid = item["requester_id"] if item["requester_id"] != user["id"] else item["provider_id"]
         if other_uid and all(p["id"] != other_uid for p in participants):
@@ -2734,7 +2736,7 @@ async def chat_post(request: Request, request_id: int, body: str = Form(""),
             ))
         if body.strip() or stored:
             add_message(connection, request_id, user["id"], "chat",
-                        body.strip() or "Sent an attachment", attachment=stored)
+                        body.strip(), attachment=stored)
     return RedirectResponse(f"/chat/{request_id}", status_code=303)
 
 
