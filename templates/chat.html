@@ -6,13 +6,6 @@
 <aside class="chat-threads">
   <div class="rail-head"><a class="rail-back" href="/messages">← All messages</a></div>
   <h3>{{ item.title }}</h3>
-  <a class="ws-thread {% if not with_id %}active{% endif %}" href="/chat/{{ item.id }}">
-    <span class="thread-av">👥</span>
-    <span class="thread-body">
-      <span class="thread-top"><b>Everyone</b></span>
-      <span class="thread-preview">Whole group conversation</span>
-    </span>
-  </a>
   {% for p in participants %}
   <a class="ws-thread {% if with_id == p.id %}active{% endif %}" href="/chat/{{ item.id }}?with={{ p.id }}">
     <span class="thread-av">{{ p.name[0]|upper }}</span>

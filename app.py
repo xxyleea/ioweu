@@ -2374,6 +2374,13 @@ def chat_page(request: Request, request_id: int, with_id: int | None = Query(Non
                GROUP BY u.id ORDER BY last_at DESC""",
             (request_id, request_id, request_id, user["id"]),
         ).fetchall()
+        other_uid = item["requester_id"] if item["requester_id"] != user["id"] else item["provider_id"]
+        if other_uid and all(p["id"] != other_uid for p in participants):
+            other_row = connection.execute(
+                "SELECT id, name FROM users WHERE id=?", (other_uid,)).fetchone()
+            if other_row:
+                participants.append({"id": other_row["id"], "name": other_row["name"],
+                                     "last_body": None, "last_at": None})
         pending_offer = pending_message(connection, request_id, "offer")
         pending_meetup = pending_message(connection, request_id, "meetup")
         pending_settlement = pending_message(connection, request_id, "settlement")
