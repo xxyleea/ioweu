@@ -2316,7 +2316,7 @@ def rewards_page(request: Request, claimed: int | None = Query(None), error: str
             "SELECT * FROM rewards WHERE active=1 ORDER BY featured DESC, credit_cost ASC"
         ).fetchall()
         redemptions = connection.execute(
-            """SELECT rr.*, r.title, r.emoji, r.pastel, r.description, r.partner, r.expiry_date
+            """SELECT rr.*, r.title, r.emoji, r.pastel, r.category, r.description, r.partner, r.expiry_date
                FROM reward_redemptions rr JOIN rewards r ON r.id=rr.reward_id
                WHERE rr.user_id=? ORDER BY rr.redeemed_at DESC""",
             (user["id"],),
