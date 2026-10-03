@@ -32,13 +32,21 @@
 
 <section class="card">
   <h2>Tasks in this Circle</h2>
-  <ul class="simple-list">
+  <div class="exchange-list">
   {% for member in all_members %}
-    <li><b>{{ member.requester_name }}</b>: {{ member.title }} · ~{{ member.requester_value }} credits
-      <span class="status s-open">{{ member.response }}</span>
-      {% if member.request_id == my_own_request %}<small class="muted">your own task</small>{% endif %}</li>
+    <div class="exchange-row">
+      <span class="thread-av">{{ member.requester_name[0]|upper }}</span>
+      <div class="ex-main">
+        <b>{{ member.title }}</b>
+        <small class="muted">{{ member.requester_name }}{% if member.request_id == my_own_request %} · your own task{% endif %}</small>
+      </div>
+      <div class="ex-side">
+        <span class="status s-{{ member.response }}">{{ member.response }}</span>
+        <b>~{{ member.requester_value }} cr</b>
+      </div>
+    </div>
   {% endfor %}
-  </ul>
+  </div>
 </section>
 
 {% if proposal.status == 'pending' %}

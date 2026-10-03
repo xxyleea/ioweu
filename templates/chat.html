@@ -41,7 +41,7 @@
       <a href="/report?request_id={{ item.id }}">Report</a>
       {% set other_id = item.requester_id if item.requester_id != user.id else item.provider_id %}
       {% if other_id %}
-      <form method="post" action="/users/{{ other_id }}/block" onsubmit="return confirm('Block this resident? You will no longer see each other\'s tasks or messages.')"><input type="hidden" name="next" value="/messages"><button>Block resident</button></form>
+      <button type="button" data-modal-open="block-modal">Block resident</button>
       {% endif %}
     </div>
   </details>
@@ -82,6 +82,17 @@
 </div>
 
 <div class="chat-toolbar">
+  {% if item.status == 'completion_submitted' and item.requester_id == user.id %}
+  <button class="btn-ghost" data-modal-open="review-modal">Review completion</button>
+  {% elif item.status == 'agreement_pending' and (item.requester_id == user.id or item.provider_id == user.id) %}
+  <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-ghost">Confirm Exchange</button></form>
+  {% elif hero.actor == 'you' and hero.action %}
+    {% if hero.action.modal %}
+    <button class="btn-ghost" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
+    {% else %}
+    <a class="btn-ghost" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
+    {% endif %}
+  {% endif %}
   {% if item.status == 'in_progress' and item.provider_id == user.id %}
   <button class="btn-ghost" data-modal-open="complete-modal">✔ Mark as Complete</button>
   {% endif %}
@@ -220,6 +231,19 @@
     <div class="modal-actions">
       <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise dispute</a>
       <form method="post" action="/requests/{{ item.id }}/review/confirm"><button class="btn-primary">Confirm &amp; start three-day hold</button></form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if other_id %}
+<div class="modal" id="block-modal" hidden>
+  <div class="modal-card">
+    <h2>Block this resident?</h2>
+    <p class="muted">You won't see each other's tasks or messages, and IoU won't match you into the same Circle. You can unblock later in Settings.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" data-modal-close>Cancel</button>
+      <form method="post" action="/users/{{ other_id }}/block"><input type="hidden" name="next" value="/messages"><button class="btn-primary danger-solid">Block resident</button></form>
     </div>
   </div>
 </div>
