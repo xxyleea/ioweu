@@ -618,9 +618,48 @@ def init_db() -> None:
             ("cancel_compensation", "INTEGER NOT NULL DEFAULT 0"),
             ("evidence_required", "INTEGER NOT NULL DEFAULT 1"),
             ("duration_minutes", "INTEGER NOT NULL DEFAULT 0"),
+            ("community_id", "INTEGER"),
+            ("visibility", "TEXT NOT NULL DEFAULT 'public'"),
         ):
             if column not in columns:
                 connection.execute(f"ALTER TABLE requests ADD COLUMN {column} {definition}")
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS communities(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                kind TEXT NOT NULL DEFAULT 'custom',
+                district TEXT,
+                color TEXT NOT NULL DEFAULT '#cfe7e8',
+                code TEXT UNIQUE,
+                water_level INTEGER NOT NULL DEFAULT 18,
+                jars_filled INTEGER NOT NULL DEFAULT 0,
+                exchanges INTEGER NOT NULL DEFAULT 0,
+                credits_total INTEGER NOT NULL DEFAULT 0,
+                filled INTEGER NOT NULL DEFAULT 0,
+                created_by INTEGER,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS community_members(
+                community_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL DEFAULT 'member',
+                joined_at TEXT,
+                PRIMARY KEY (community_id, user_id)
+            );
+            CREATE TABLE IF NOT EXISTS community_contributions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                community_id INTEGER NOT NULL,
+                request_id INTEGER NOT NULL,
+                user_id INTEGER,
+                credits INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members(user_id);
+            CREATE INDEX IF NOT EXISTS idx_requests_community ON requests(community_id);
+            """
+        )
         notif_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notifications)")}
         if "kind" not in notif_columns:
             connection.execute("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'info'")
@@ -1297,7 +1336,9 @@ def load_board(connection: sqlite3.Connection):
     requests = connection.execute(
         """SELECT r.*, u.name requester_name, p.name provider_name
            FROM requests r JOIN users u ON u.id=r.requester_id
-           LEFT JOIN users p ON p.id=r.provider_id ORDER BY r.created_at DESC"""
+           LEFT JOIN users p ON p.id=r.provider_id
+           WHERE COALESCE(r.visibility, 'public') = 'public'
+           ORDER BY r.created_at DESC"""
     ).fetchall()
     recommendations = {
         item["id"]: recommendation(
@@ -1310,6 +1351,98 @@ def load_board(connection: sqlite3.Connection):
         for item in requests
     }
     return requests, recommendations
+
+
+COMMUNITY_WATER_BASE = 18
+COMMUNITY_WATER_PER_CREDIT = 3
+COMMUNITY_REWARD = 5
+
+
+def my_communities(connection: sqlite3.Connection, user_id: int) -> list:
+    return connection.execute(
+        """SELECT c.*,
+                  (SELECT COUNT(*) FROM community_members m WHERE m.community_id=c.id) member_count
+           FROM communities c JOIN community_members m ON m.community_id=c.id
+           WHERE m.user_id=?
+           ORDER BY (c.kind='location') DESC, c.name""",
+        (user_id,),
+    ).fetchall()
+
+
+def is_community_member(connection: sqlite3.Connection, community_id: int, user_id: int) -> bool:
+    return bool(connection.execute(
+        "SELECT 1 FROM community_members WHERE community_id=? AND user_id=?",
+        (community_id, user_id),
+    ).fetchone())
+
+
+def ensure_location_community(connection: sqlite3.Connection, user) -> int | None:
+    district = (user["district"] or "").strip()
+    if not district:
+        return None
+    row = connection.execute(
+        "SELECT id FROM communities WHERE kind='location' AND district=?",
+        (district,),
+    ).fetchone()
+    if row:
+        community_id = row["id"]
+    else:
+        cursor = connection.execute(
+            """INSERT INTO communities(name,description,kind,district,color,created_at)
+               VALUES (?,?,?,?,?,?)""",
+            (f"{district} Neighbours",
+             f"Everyone who lives in {district} — a neighbourhood jar that fills itself.",
+             "location", district, "#cfe7e8", now()),
+        )
+        community_id = cursor.lastrowid
+    connection.execute(
+        "INSERT OR IGNORE INTO community_members(community_id,user_id,joined_at) VALUES (?,?,?)",
+        (community_id, user["id"], now()),
+    )
+    return community_id
+
+
+def add_community_stone(connection: sqlite3.Connection, item, contributor_id: int) -> dict | None:
+    """Record a finished exchange as one stone in the community jar."""
+    community_id = item["community_id"]
+    if not community_id:
+        return None
+    agreed = item["agreed_value"] or item["requester_value"] or 1
+    connection.execute(
+        """INSERT INTO community_contributions(community_id,request_id,user_id,credits,created_at)
+           VALUES (?,?,?,?,?)""",
+        (community_id, item["id"], contributor_id, agreed, now()),
+    )
+    comm = connection.execute("SELECT * FROM communities WHERE id=?",
+                              (community_id,)).fetchone()
+    rise = max(1, round(agreed * COMMUNITY_WATER_PER_CREDIT))
+    level = min(100, comm["water_level"] + rise)
+    jars = comm["jars_filled"]
+    reward = False
+    if level >= 100:
+        reward = True
+        jars += 1
+        level = COMMUNITY_WATER_BASE
+    connection.execute(
+        """UPDATE communities SET water_level=?, jars_filled=?,
+           exchanges=exchanges+1, credits_total=credits_total+?, filled=? WHERE id=?""",
+        (level, jars, agreed, 1 if reward else comm["filled"], community_id),
+    )
+    if reward:
+        members = connection.execute(
+            "SELECT user_id FROM community_members WHERE community_id=?",
+            (community_id,),
+        ).fetchall()
+        for member in members:
+            connection.execute("UPDATE users SET balance=balance+? WHERE id=?",
+                               (COMMUNITY_REWARD, member["user_id"]))
+            ledger_entry(connection, member["user_id"], item["id"], "community_reward",
+                         COMMUNITY_REWARD,
+                         f"Community jar filled — everyone in \"{comm['name']}\" shared +{COMMUNITY_REWARD} credits")
+            notify(connection, member["user_id"],
+                   f"Your community \"{comm['name']}\" filled the jar! Everyone received +{COMMUNITY_REWARD} credits.",
+                   "/community", kind="success")
+    return {"level": level, "credits": agreed, "rise": rise, "reward": reward}
 
 
 def release_due_payments(connection: sqlite3.Connection) -> None:
@@ -1477,6 +1610,7 @@ def home(request: Request):
                 (user["id"],)).fetchone()
         tier = user_tier(user)
         score = user_reliability(user)
+        communities = my_communities(connection, user["id"])
         standing = {
             "score": score,
             "label": reliability_label(score),
@@ -1510,6 +1644,7 @@ def home(request: Request):
         stats=stats,
         task_categories=TASK_CATEGORIES,
         genre_emoji=GENRE_EMOJI,
+        communities=communities,
     )
 
 
@@ -1983,6 +2118,112 @@ def recommended_page(request: Request):
     return RedirectResponse("/browse", status_code=303)
 
 
+@app.get("/community", response_class=HTMLResponse)
+def community_page(request: Request, cid: int | None = Query(None),
+                   stone: int | None = Query(None), created: str = "",
+                   joined: str = "", join_error: str = ""):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        ensure_location_community(connection, user)
+        communities = my_communities(connection, user["id"])
+        current = None
+        if communities:
+            current = next((c for c in communities if c["id"] == cid), communities[0])
+        stone_info = None
+        if current and stone:
+            req = connection.execute(
+                "SELECT * FROM requests WHERE id=?", (stone,)).fetchone()
+            if req and req["community_id"] == current["id"]:
+                stone_info = {
+                    "title": req["title"],
+                    "credits": req["agreed_value"] or req["requester_value"] or 1,
+                }
+        need_help, helping, activity = [], [], []
+        if current:
+            need_help = connection.execute(
+                """SELECT r.*, u.name requester_name FROM requests r
+                   JOIN users u ON u.id=r.requester_id
+                   WHERE r.community_id=? AND r.status='open' AND r.requester_id != ?
+                   ORDER BY r.created_at DESC""",
+                (current["id"], user["id"]),
+            ).fetchall()
+            helping = connection.execute(
+                """SELECT r.*, u.name requester_name FROM requests r
+                   JOIN users u ON u.id=r.requester_id
+                   WHERE r.community_id=? AND r.provider_id=?
+                     AND r.status NOT IN ('completed','resolved','cancelled')
+                   ORDER BY r.created_at DESC""",
+                (current["id"], user["id"]),
+            ).fetchall()
+            activity = connection.execute(
+                """SELECT cc.credits, cc.created_at, r.title, r.category, u.name contributor_name
+                   FROM community_contributions cc
+                   JOIN requests r ON r.id=cc.request_id
+                   LEFT JOIN users u ON u.id=cc.user_id
+                   WHERE cc.community_id=? ORDER BY cc.created_at DESC, cc.id DESC LIMIT 8""",
+                (current["id"],),
+            ).fetchall()
+    return render(request, "community.html", page="community",
+                  communities=communities, current=current, stone_info=stone_info,
+                  need_help=need_help, helping=helping, activity=activity,
+                  created=created or None, joined=joined or None,
+                  join_error=join_error or None, genre_emoji=GENRE_EMOJI)
+
+
+@app.post("/community/create")
+def community_create(request: Request, name: str = Form(...),
+                     description: str = Form(""), color: str = Form("#cfe7e8")):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    name = name.strip()
+    if not (2 <= len(name) <= 40):
+        return redirect_toast("/community", "Community name needs 2–40 characters")
+    with db() as connection:
+        code = None
+        for _ in range(20):
+            candidate = f"{secrets.randbelow(900000) + 100000}"
+            if not connection.execute("SELECT 1 FROM communities WHERE code=?",
+                                      (candidate,)).fetchone():
+                code = candidate
+                break
+        cursor = connection.execute(
+            """INSERT INTO communities(name,description,kind,color,code,created_by,created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (name, description.strip(), "custom",
+             color if color.startswith("#") else "#cfe7e8", code, user["id"], now()),
+        )
+        community_id = cursor.lastrowid
+        connection.execute(
+            "INSERT OR IGNORE INTO community_members(community_id,user_id,role,joined_at) VALUES (?,?,?,?)",
+            (community_id, user["id"], "founder", now()),
+        )
+    return RedirectResponse(f"/community?cid={community_id}&created={code}", status_code=303)
+
+
+@app.post("/community/join")
+def community_join(request: Request, code: str = Form(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    code = code.strip()
+    with db() as connection:
+        comm = connection.execute("SELECT * FROM communities WHERE code=?",
+                                  (code,)).fetchone()
+        if not comm:
+            return RedirectResponse("/community?join_error=1", status_code=303)
+        already = is_community_member(connection, comm["id"], user["id"])
+        connection.execute(
+            "INSERT OR IGNORE INTO community_members(community_id,user_id,joined_at) VALUES (?,?,?)",
+            (comm["id"], user["id"], now()),
+        )
+        if already:
+            return RedirectResponse(f"/community?cid={comm['id']}", status_code=303)
+    return RedirectResponse(f"/community?cid={comm['id']}&joined=1", status_code=303)
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return FileResponse(BASE_DIR / "static" / "favicon.svg", media_type="image/svg+xml")
@@ -2270,9 +2511,11 @@ def new_request_page(request: Request):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        communities = my_communities(connection, user["id"])
     return render(request, "new_request.html", page="posts",
                   task_categories=TASK_CATEGORIES, genre_emoji=GENRE_EMOJI,
-                  hk_districts=HK_DISTRICTS)
+                  hk_districts=HK_DISTRICTS, communities=communities)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2347,6 +2590,10 @@ def chat_page(request: Request, request_id: int, with_id: int | None = Query(Non
             (request_id, user["id"]),
         ).fetchone()
         if item and item["status"] == "open" and item["requester_id"] != user["id"] and not is_participant:
+            if item["visibility"] == "community" and not is_community_member(
+                    connection, item["community_id"], user["id"]):
+                return render(request, "error.html",
+                              message="This task is only open to members of its community.")
             if is_blocked(connection, user["id"], item["requester_id"]):
                 return render(request, "error.html",
                               message="You can't join this task — you have blocked this resident.")
@@ -2402,6 +2649,7 @@ def chat_page(request: Request, request_id: int, with_id: int | None = Query(Non
                   pending_settlement=pending_settlement, dispute=dispute, rec=rec,
                   my_confirm=my_confirm, hero=hero, genre_emoji=GENRE_EMOJI,
                   participants=participants, with_id=with_id,
+                  connected="connected" in request.query_params,
                   step_index=STATUS_STEP.get(item["status"], 0),
                   timeline_steps=TIMELINE_STEPS,
                   status_label=STATUS_LABELS.get(item["status"], item["status"]))
@@ -2498,6 +2746,7 @@ def create_request(
     duration_minutes: int = Form(0),
     confirm_outside_range: str | None = Form(None),
     confirm_accurate: str | None = Form(None),
+    community_id: int | None = Form(None),
 ):
     user = current_user(request)
     if not user:
@@ -2552,6 +2801,12 @@ def create_request(
     if duration_minutes and 5 <= duration_minutes <= 1440:
         effort_minutes = duration_minutes
     with db() as connection:
+        community_id_value = None
+        if community_id:
+            if not is_community_member(connection, community_id, user["id"]):
+                return render(request, "error.html",
+                              message="You can only post to communities you belong to.")
+            community_id_value = community_id
         suggested = recommendation(connection, category, effort_minutes, complexity)
         if (offered_value < suggested["range"][0] or offered_value > suggested["range"][1]) and confirm_outside_range != "1":
             return render(request, "error.html", message=(
@@ -2562,14 +2817,16 @@ def create_request(
         connection.execute(
             """INSERT INTO requests(
                 title,description,category,location,needed_by,urgency,preferred_time,requester_id,
-                requester_value,requester_buffer,effort_minutes,complexity,created_at,duration_minutes
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                requester_value,requester_buffer,effort_minutes,complexity,created_at,duration_minutes,
+                community_id,visibility
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 title.strip(), description.strip(), category.strip().lower(),
                 location.strip(), needed_by.strip() or None, urgency.strip() or None,
                 preferred_time.strip() or None,
                 user["id"], offered_value, offered_buffer, effort_minutes,
                 complexity, now(), duration_minutes or 0,
+                community_id_value, "community" if community_id_value else "public",
             ),
         )
     return RedirectResponse("/my-posts?posted=1", status_code=303)
@@ -2830,6 +3087,10 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
         is_provider = item["provider_id"] == user["id"]
         allowed = (item["status"] == "open" and not is_owner) or \
                   (item["status"] == "negotiating" and (is_owner or is_provider))
+        if allowed and item["visibility"] == "community" and not is_community_member(
+                connection, item["community_id"], user["id"]):
+            return render(request, "error.html",
+                          message="This task is only open to members of its community.")
         if not allowed:
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
         value = item["requester_value"] if mode == "accept" else max(1, amount or 1)
@@ -2999,9 +3260,13 @@ def confirm_exchange(request: Request, request_id: int):
                        "Circle agreement confirmed — no credits move." if in_circle
                        else "Exchange confirmed — credits are in escrow. Time to schedule the task.",
                        f"/requests/{request_id}", kind="success")
+    just_connected = bool(item["confirm_requester"] and item["confirm_provider"])
+    if just_connected:
+        return redirect_toast(f"/chat/{request_id}?connected=1",
+                              "Circle agreement confirmed — no credits exchanged"
+                              if item["circle_id"] else "Exchange confirmed — credits are in escrow")
     return redirect_toast(f"/chat/{request_id}",
-                          "Circle agreement confirmed — no credits exchanged"
-                          if item["circle_id"] else "Exchange confirmed — credits are in escrow")
+                          "Waiting for the other neighbour to confirm too.")
 
 
 @app.post("/requests/{request_id}/meetup")
@@ -3197,6 +3462,13 @@ def review_confirm(request: Request, request_id: int):
         notify(connection, item["provider_id"],
                f"Completion confirmed — {item['agreed_value']} credits will be released after the three-day dispute window.",
                f"/requests/{request_id}", kind="success")
+        stone = None
+        if item["community_id"]:
+            stone = add_community_stone(connection, item, user["id"])
+    if stone:
+        return redirect_toast(
+            f"/community?cid={item['community_id']}&stone={request_id}",
+            "Another little thing done.")
     return redirect_toast(f"/chat/{request_id}", "✓ Completion confirmed — credits held for three days")
 
 

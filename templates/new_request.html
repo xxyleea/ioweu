@@ -45,6 +45,13 @@
       <label class="radio-row"><input type="radio" name="task_mode" value="offline" id="tm-offline" checked> <b>In person</b> — someone comes over or meets you somewhere</label>
       <label class="radio-row"><input type="radio" name="task_mode" value="online" id="tm-online"> <b>Online</b> — done over chat, call or screen-share</label>
     </div>
+    {% if communities %}
+    <label>Who can see this request?</label>
+    <select name="community_id" id="visibility-select">
+      <option value="">Everyone on IoU</option>
+      {% for c in communities %}<option value="{{ c.id }}">{{ c.name }} — members only</option>{% endfor %}
+    </select>
+    {% endif %}
     <div id="location-block">
     <label>Where is the task?</label>
     <div class="addr-wrap">
@@ -212,6 +219,8 @@ function buildPreview() {
   meta.push("requested by {{ user.name }}");
   if (tmOnline.checked) meta.push("🌐 Online");
   else if (chosenLocation()) meta.push("📍 " + chosenLocation());
+  const visSel = document.querySelector("#visibility-select");
+  if (visSel && visSel.value) meta.push("🔒 Community only");
   if (neededBy.value) meta.push("⏰ needed by " + neededBy.value);
   document.querySelector("#pv-meta").textContent = meta.join(" · ");
   document.querySelector("#pv-offer").textContent = offer.value;

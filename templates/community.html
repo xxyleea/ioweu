@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block title %}IoU · Community{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>My community</h1>
+    <p class="muted">Small things add up — every finished exchange is one more stone in the jar.</p>
+  </div>
+  <div class="page-head-actions">
+    <button class="btn-ghost" data-modal-open="join-modal">Join with code</button>
+    <button class="btn-primary" data-modal-open="create-modal">+ Create a community</button>
+  </div>
+</header>
+
+{% if communities|length > 1 %}
+<div class="board-tabs">
+  {% for c in communities %}
+  <a class="btab {% if current and c.id == current.id %}active{% endif %}" href="/community?cid={{ c.id }}">{{ "📍 " if c.kind == "location" }}{{ c.name }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if created %}
+<div class="success-banner">
+  <span class="success-tick">✓</span>
+  <div>
+    <b>Your community is ready.</b>
+    <p class="muted" style="margin:.2rem 0 0">Share this code with your neighbours:</p>
+    <p class="join-code"><span id="join-code">{{ created }}</span> <button class="btn-ghost btn-sm" id="copy-code" type="button">Copy code</button></p>
+  </div>
+</div>
+{% endif %}
+{% if joined %}
+<div class="success-banner"><span class="success-tick">✓</span><div><b>You're in.</b> Welcome to {{ current.name }}.</div></div>
+{% endif %}
+{% if join_error %}
+<p class="error">That code doesn't match any community — double-check the 6 digits.</p>
+{% endif %}
+
+{% if not current %}
+<div class="card empty-comm">
+  <p><b>No community yet.</b></p>
+  <p class="muted">Join one with a 6-digit code from a neighbour, or create your own — a hall, a block, a building.</p>
+  <div class="hero-actions">
+    <button class="btn-primary" data-modal-open="create-modal">+ Create a community</button>
+    <button class="btn-ghost" data-modal-open="join-modal">Join with code</button>
+  </div>
+</div>
+{% else %}
+{% set level = current.water_level %}
+{% set water_y = (372 - 282 * level / 100)|round|int %}
+{% set rise_pct = stone_info.credits * 3 if stone_info else 0 %}
+{% set pre_level = [level - rise_pct, 18]|max %}
+{% set pre_y = (372 - 282 * pre_level / 100)|round|int %}
+
+<section class="comm-hero card">
+  <div class="comm-jar-wrap" id="jar-wrap">
+    <svg class="comm-jar" viewBox="0 0 340 420" aria-label="Community water jar, {{ level }} percent full">
+      <defs>
+        <clipPath id="jarClip">
+          <path d="M104 44 C102 86 84 108 70 142 C54 180 50 216 50 258 C50 336 92 376 170 376 C248 376 290 336 290 258 C290 216 286 180 270 142 C256 108 238 86 236 44 Z"/>
+        </clipPath>
+      </defs>
+      <g clip-path="url(#jarClip)">
+        <g class="jar-water-group" id="jarWater" style="transform: translateY({{ (water_y - pre_y) }}px); transition: none;">
+          <rect x="30" y="{{ pre_y }}" width="290" height="{{ 420 - pre_y }}" fill="#cfe7e8"/>
+          <ellipse class="jar-surface" cx="170" cy="{{ pre_y }}" rx="135" ry="9" fill="#dceff0"/>
+        </g>
+        {% set stone_count = [current.exchanges, 14]|min %}
+        {% for i in range(stone_count) %}
+        <ellipse class="jar-stone" cx="{{ 78 + (i * 37) % 190 }}" cy="{{ 356 - (i * 13) % 42 }}" rx="{{ 11 + (i * 5) % 7 }}" ry="{{ 8 + (i * 3) % 5 }}" fill="{{ ['#b9aa94','#c4b6a2','#ac9d86'][i % 3] }}" opacity=".9"/>
+        {% endfor %}
+      </g>
+      <path class="jar-outline" d="M104 44 C102 86 84 108 70 142 C54 180 50 216 50 258 C50 336 92 376 170 376 C248 376 290 336 290 258 C290 216 286 180 270 142 C256 108 238 86 236 44" fill="rgba(255,255,255,.45)" stroke="#23272b" stroke-width="3.5" stroke-linecap="round"/>
+      <path class="jar-neck" d="M104 44 L236 44" stroke="#23272b" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- a quiet crow, watching the water rise -->
+      <g class="jar-crow" transform="translate(268 300)">
+        <path d="M18 62 C6 58 0 46 4 34 C7 24 16 18 26 20 L44 24 L58 16 L52 30 C56 40 52 54 40 60 C33 64 25 64 18 62 Z" fill="#23272b"/>
+        <circle cx="46" cy="24" r="2.2" fill="#faf6ee"/>
+        <path d="M58 16 L70 20 L56 26 Z" fill="#23272b"/>
+        <path d="M20 62 L18 74 M32 62 L33 74" stroke="#23272b" stroke-width="2.5" stroke-linecap="round"/>
+      </g>
+    </svg>
+
+    {% if stone_info %}
+    <div class="stone-overlay" id="stoneOverlay">
+      <div class="stone-fall" id="stoneFall"></div>
+      <div class="stone-ripple" id="stoneRipple"></div>
+      <div class="stone-caption" id="stoneCaption" hidden>
+        <b>+{{ stone_info.credits }} credits · one more stone</b>
+        <span>{{ stone_info.title }}</span>
+        <em>Another little thing done.</em>
+      </div>
+      <button class="btn-ghost btn-sm stone-skip" id="stoneSkip" type="button">Skip</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="comm-side">
+    <span class="comm-kind">{{ "Location community" if current.kind == "location" else "Your community" }}</span>
+    <h2>{{ current.name }}</h2>
+    {% if current.description %}<p class="muted">{{ current.description }}</p>{% endif %}
+    <p class="comm-stats"><b>{{ current.member_count }}</b> neighbours · <b>{{ current.exchanges }}</b> exchanges · <b>{{ current.credits_total }}</b> credits shared{% if current.jars_filled %} · <b>{{ current.jars_filled }}</b> jar{{ "s" if current.jars_filled != 1 }} filled{% endif %}</p>
+
+    <div class="comm-progress">
+      <div class="comm-progress-bar"><span style="width:{{ level }}%"></span></div>
+      <small class="muted">The jar is {{ level }}% full</small>
+      <p class="comm-motto">
+        {% if level < 30 %}"Your community is just getting started."
+        {% elif level < 60 %}"Little by little, the water rises."
+        {% elif level < 90 %}"Look how far you've come."
+        {% else %}"Almost there — one or two more stones."
+        {% endif %}
+      </p>
+    </div>
+
+    <div class="hero-actions">
+      <a class="btn-primary" href="/new-request">Ask for help</a>
+      <a class="btn-ghost" href="#comm-board">Help a neighbour ↓</a>
+    </div>
+    {% if current.code %}
+    <p class="muted small">Invite neighbours with code <b class="join-code-inline">{{ current.code }}</b> <button class="link-button copy-inline" data-code="{{ current.code }}" type="button">Copy</button></p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="home-section" id="comm-board">
+  <div class="board-tabs">
+    <button class="btab active" data-board="need">Need help</button>
+    <button class="btab" data-board="helping">Help others</button>
+  </div>
+
+  <div class="exchange-table" data-board-panel="need">
+    {% for item in need_help %}
+    <a class="exchange-row card" href="/requests/{{ item.id }}">
+      <span class="thread-av">{{ genre_emoji.get(item.category, "🗂️") }}</span>
+      <div class="ex-main">
+        <b>{{ item.title }}</b>
+        <small class="muted">{{ item.requester_name }} · {% if item.needed_by %}by {{ item.needed_by }}{% else %}flexible{% endif %}</small>
+      </div>
+      <div class="ex-side">
+        <span class="status s-{{ item.urgency or 'open' }}">{{ item.urgency or "open" }}</span>
+        <b>{{ item.requester_value }} cr</b>
+      </div>
+    </a>
+    {% else %}
+    <div class="card"><p class="empty">No open requests here right now. <a href="/new-request">Ask for help →</a> and it shows up in your community.</p></div>
+    {% endfor %}
+  </div>
+
+  <div class="exchange-table" data-board-panel="helping" hidden>
+    {% for item in helping %}
+    <a class="exchange-row card" href="/chat/{{ item.id }}">
+      <span class="thread-av">{{ genre_emoji.get(item.category, "🗂️") }}</span>
+      <div class="ex-main">
+        <b>{{ item.title }}</b>
+        <small class="muted">helping {{ item.requester_name }} · {{ item.status.replace("_", " ") }}</small>
+      </div>
+      <div class="ex-side"><span class="status s-{{ item.status }}">{{ item.status.replace("_", " ") }}</span></div>
+    </a>
+    {% else %}
+    <div class="card"><p class="empty">You're not helping with any community tasks yet — pick one from "Need help".</p></div>
+    {% endfor %}
+  </div>
+</section>
+
+{% if activity %}
+<section class="home-section">
+  <h2 class="section-title">Recent little things</h2>
+  <div class="card news-card">
+    {% for a in activity %}
+    <div class="news-row">
+      <span class="news-dot"></span>
+      <p>{% if a.contributor_name %}<b>{{ a.contributor_name.split(" ")[0] }}</b> helped with {% endif %}“{{ a.title }}”
+        <small class="muted"> · +{{ a.credits }} credits to the jar</small></p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endif %}
+
+<div class="modal" id="create-modal" hidden>
+  <div class="modal-card">
+    <h2>Create a community</h2>
+    <p class="muted">A hall, a block, a building — anyone with the code can join.</p>
+    <form method="post" action="/community/create" class="modal-form">
+      <label>Community name<input name="name" required maxlength="40" placeholder="e.g. Swire Hall 2026"></label>
+      <label>Description (optional)<input name="description" maxlength="120" placeholder="Who is this community for?"></label>
+      <label>Pastel colour
+        <select name="color">
+          <option value="#cfe7e8">Water blue</option>
+          <option value="#fdeab2">Warm yellow</option>
+          <option value="#dff0bd">Soft green</option>
+          <option value="#fbd5e2">Gentle pink</option>
+          <option value="#e7ddfb">Light purple</option>
+        </select>
+      </label>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Create community</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="join-modal" hidden>
+  <div class="modal-card">
+    <h2>Join a community</h2>
+    <p class="muted">Enter the 6-digit code a neighbour shared with you.</p>
+    <form method="post" action="/community/join" class="modal-form">
+      <label>Community code<input name="code" required pattern="[0-9]{6}" maxlength="6" minlength="6" inputmode="numeric" placeholder="e.g. 482731"></label>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Join community</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.querySelectorAll('[data-modal-open]').forEach(b => b.addEventListener('click', () => {
+  document.getElementById(b.dataset.modalOpen).hidden = false;
+}));
+document.querySelectorAll('[data-modal-close]').forEach(b => b.addEventListener('click', () => {
+  b.closest('.modal').hidden = true;
+}));
+
+/* board tabs */
+const boardTabs = document.querySelectorAll('[data-board]');
+boardTabs.forEach(t => t.addEventListener('click', () => {
+  boardTabs.forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.querySelectorAll('[data-board-panel]').forEach(p => {
+    p.hidden = p.dataset.boardPanel !== t.dataset.board;
+  });
+}));
+
+/* copy codes */
+function bindCopy(btn, text) {
+  btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      const orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = orig; }, 1500);
+    } catch (e) {}
+  });
+}
+const copyBtn = document.getElementById('copy-code');
+if (copyBtn) bindCopy(copyBtn, document.getElementById('join-code').textContent.trim());
+document.querySelectorAll('.copy-inline').forEach(b => bindCopy(b, b.dataset.code));
+
+/* stone contribution animation */
+const overlay = document.getElementById('stoneOverlay');
+if (overlay) {
+  const fall = document.getElementById('stoneFall');
+  const ripple = document.getElementById('stoneRipple');
+  const caption = document.getElementById('stoneCaption');
+  const water = document.getElementById('jarWater');
+  const finish = () => {
+    water.style.transition = 'transform 1.2s ease';
+    water.style.transform = 'translateY(0)';
+    setTimeout(() => { caption.hidden = false; }, 700);
+    setTimeout(() => { overlay.classList.add('fade'); }, 4200);
+    setTimeout(() => { overlay.remove(); }, 4900);
+  };
+  setTimeout(() => {
+    fall.classList.add('drop');
+    setTimeout(() => {
+      ripple.classList.add('splash');
+      finish();
+    }, 850);
+  }, 400);
+  document.getElementById('stoneSkip').addEventListener('click', () => {
+    overlay.remove();
+    water.style.transition = 'none';
+    water.style.transform = 'translateY(0)';
+  });
+}
+</script>
+{% endblock %}
