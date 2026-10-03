@@ -3371,9 +3371,9 @@ def community_join(request: Request, code: str = Form(...)):
 
 
 REWARDS_CATEGORIES = (
-    ("all", "All"), ("food", "☕ Food & Drinks"), ("experiences", "🎬 Experiences"),
-    ("learning", "📚 Learning"), ("community", "🌱 Community"),
-    ("everyday", "🛍 Everyday"), ("surprises", "✨ Little surprises"),
+    ("all", "All"), ("food", "Food & Drinks"), ("experiences", "Experiences"),
+    ("learning", "Learning"), ("community", "Community"),
+    ("everyday", "Everyday"), ("surprises", "Little surprises"),
 )
 
 
