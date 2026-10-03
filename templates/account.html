@@ -65,6 +65,10 @@
             <option value="zh" {% if user.language == 'zh' %}selected{% endif %}>普通话</option>
           </select>
         </label>
+        <div class="consent-settings">
+          <p class="field-label">Privacy &amp; consent</p>
+          <label class="check-row"><input type="checkbox" name="consent_analytics" value="1" {% if user.consent_analytics %}checked{% endif %}> Allow anonymized usage data to improve IoU recommendations and matching</label>
+        </div>
         <button class="btn-primary">Save changes</button>
       </form>
     </div>

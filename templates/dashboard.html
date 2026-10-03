@@ -10,21 +10,25 @@
 
 {% if recommended_tasks %}
 <section class="home-section">
-  <h2 class="section-title">✨ Recommended for you</h2>
-  <div class="rec-carousel">
-    {% for item in recommended_tasks %}
-    <a class="rec-card cat-{{ item.category|slug }}" href="/requests/{{ item.id }}">
-      <div class="rec-art"><span class="rec-emoji">{{ genre_emoji.get(item.category|lower, '📋') }}</span></div>
-      <div class="rec-body">
-        <b>{{ item.title }}</b>
-        <small class="muted">{{ item.requester_name }}{% if item.location %} · 📍 {{ item.location }}{% endif %}</small>
-        <span class="rec-foot">
-          <span class="browse-offer"><b>{{ item.requester_value }}</b> credits</span>
-          {% if item.id in matched_ids %}<span class="match-badge">★ For you</span>{% endif %}
-        </span>
-      </div>
-    </a>
-    {% endfor %}
+  <h2 class="section-title">Recommended for you</h2>
+  <div class="cf" id="cf">
+    <button type="button" class="cf-arrow cf-prev" aria-label="Previous task">‹</button>
+    <div class="cf-stage">
+      {% for item in recommended_tasks %}
+      <a class="cf-card cat-{{ item.category|slug }}" href="/requests/{{ item.id }}">
+        <div class="rec-art"><span class="rec-emoji">{{ genre_emoji.get(item.category|lower, '📋') }}</span></div>
+        <div class="rec-body">
+          <b>{{ item.title }}</b>
+          <small class="muted">{{ item.requester_name }}{% if item.location %} · 📍 {{ item.location }}{% endif %}</small>
+          <span class="rec-foot">
+            <span class="browse-offer"><b>{{ item.requester_value }}</b> credits</span>
+            {% if item.id in matched_ids %}<span class="match-badge">★ For you</span>{% endif %}
+          </span>
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    <button type="button" class="cf-arrow cf-next" aria-label="Next task">›</button>
   </div>
 </section>
 {% endif %}
@@ -59,10 +63,10 @@
 </section>
 
 <div class="home-2col">
-<div>
+<div class="home-col">
 {% if action_count %}
 <section class="home-section">
-  <h2 class="section-title">⚡ {{ action_count }} thing{% if action_count != 1 %}s{% endif %} need{% if action_count == 1 %}s{% endif %} your attention</h2>
+  <h2 class="section-title">{{ action_count }} thing{% if action_count != 1 %}s{% endif %} need{% if action_count == 1 %}s{% endif %} your attention</h2>
   <div class="action-list">
     {% for e in exchanges %}{% if e.needs %}
     <a class="action-row card" href="{{ e.href }}">
@@ -98,7 +102,7 @@
 {% endif %}
 </div>
 
-<div>
+<div class="home-col">
 <section class="card credit-panel">
   <span class="stat-label">Your credits</span>
   <span class="stat-big {% if user.balance < 0 %}neg{% endif %}">{{ user.balance }}</span>
@@ -110,21 +114,6 @@
   <small class="muted">{{ stats.completed }} exchanges done · +{{ stats.kudos }} kudos earned</small>
   <a class="btn-ghost btn-sm" href="/history">View history →</a>
 </section>
-
-{% if activity %}
-<section class="home-section">
-  <h2 class="section-title">🌱 Neighbourhood news</h2>
-  <div class="card news-card">
-    {% for a in activity %}
-    <div class="news-row">
-      <span class="news-dot"></span>
-      <p><b>{{ a.provider_name }}</b> helped <b>{{ a.requester_name }}</b> with “{{ a.title }}”
-        <small class="muted"> · {{ a.agreed_value }} credits{% if a.kudos_bonus %} +{{ a.kudos_bonus }} kudos{% endif %}</small></p>
-    </div>
-    {% endfor %}
-  </div>
-</section>
-{% endif %}
 </div>
 </div>
 
@@ -138,4 +127,49 @@
   {% else %}<p class="empty">No open disputes. Enjoy the calm.</p>{% endfor %}
 </div>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+(() => {
+  const wrap = document.getElementById('cf');
+  if (!wrap) return;
+  const cards = [...wrap.querySelectorAll('.cf-card')];
+  const n = cards.length;
+  if (!n) return;
+  let cur = 0, timer = null;
+  function relOf(i) {
+    let r = (i - cur) % n;
+    if (r > n / 2) r -= n;
+    if (r < -n / 2) r += n;
+    return r;
+  }
+  function layout() {
+    cards.forEach((c, i) => {
+      const r = relOf(i);
+      const a = Math.abs(r);
+      if (a > 2) { c.style.opacity = '0'; c.style.pointerEvents = 'none'; c.style.zIndex = '0'; return; }
+      const x = r * 62;
+      const scale = a === 0 ? 1 : a === 1 ? 0.8 : 0.62;
+      c.style.zIndex = String(30 - a * 10);
+      c.style.opacity = a === 2 ? '.55' : '1';
+      c.style.pointerEvents = 'auto';
+      c.style.transform = `translateX(calc(-50% + ${x}%)) translateZ(${-a * 90}px) scale(${scale})`;
+      c.style.filter = a === 0 ? 'none' : 'brightness(.97)';
+    });
+  }
+  function go(step) { cur = (cur + step + n) % n; layout(); }
+  function play() { stop(); timer = setInterval(() => go(1), 3000); }
+  function stop() { if (timer) clearInterval(timer); timer = null; }
+  wrap.querySelector('.cf-prev').addEventListener('click', () => { go(-1); play(); });
+  wrap.querySelector('.cf-next').addEventListener('click', () => { go(1); play(); });
+  cards.forEach((c, i) => c.addEventListener('click', (e) => {
+    const r = relOf(i);
+    if (r !== 0) { e.preventDefault(); cur = i; layout(); play(); }
+  }));
+  wrap.addEventListener('mouseenter', stop);
+  wrap.addEventListener('mouseleave', play);
+  layout();
+  if (n > 1) play();
+})();
+</script>
 {% endblock %}

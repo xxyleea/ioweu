@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU — Join</title><link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/static/style.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>IoU — Join</title><link rel="icon" type="image/png" href="/static/favicon.png"><link rel="stylesheet" href="/static/style.css"></head>
 <body class="auth-body">
 <main class="auth-card wizard-card skill-picker-card">
   <div class="auth-brand"><span class="brand-dot"></span>IoU</div>
@@ -79,7 +79,21 @@
       <p class="empty" id="no-topics" hidden>Go back and pick at least one topic — or just join and do it later.</p>
     </div>
 
-    <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    <div class="wizard-step" data-step="7">
+      <h1>Before you join</h1>
+      <p class="muted">Please read and confirm the following.</p>
+      <div class="consent-block">
+        <p class="field-label">Required</p>
+        <label class="check-row"><input type="checkbox" name="consent_tos" value="1" class="consent-req"> I agree to the <a href="/help" target="_blank">Terms of Service</a></label>
+        <label class="check-row"><input type="checkbox" name="consent_privacy" value="1" class="consent-req"> I acknowledge the Privacy Notice</label>
+        <label class="check-row"><input type="checkbox" name="consent_guidelines" value="1" class="consent-req"> I agree to the Community Guidelines</label>
+        <label class="check-row"><input type="checkbox" name="consent_competence" value="1" class="consent-req"> I understand that IoU facilitates exchanges but does not automatically verify the professional competence of every provider</label>
+        <p class="field-label" style="margin-top:1rem">Optional</p>
+        <label class="check-row"><input type="checkbox" name="consent_analytics" value="1"> Allow anonymized usage data to improve IoU recommendations and matching</label>
+      </div>
+    </div>
+
+    <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
     <div class="wizard-nav">
       <button type="button" class="btn-ghost" id="back-btn" hidden>← Back</button>
       <button type="button" class="btn-primary" id="next-btn">Next →</button>
@@ -130,6 +144,10 @@ function validStep(i) {
     if (!document.querySelector("#reg-address").value.trim()) { markInvalid(document.querySelector("#reg-address")); return false; }
   }
   if (i === 3 && !document.querySelector("#reg-hkid").value.trim()) { markInvalid(document.querySelector("#reg-hkid")); return false; }
+  if (i === 7) {
+    const missing = [...document.querySelectorAll(".consent-req")].filter(c => !c.checked);
+    if (missing.length) { markInvalid(missing[0]); return false; }
+  }
   return true;
 }
 nextBtn.addEventListener("click", () => { if (validStep(current)) show(current + 1); });

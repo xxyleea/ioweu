@@ -20,7 +20,6 @@
 <div class="chat-main card">
   <details class="ws-context">
     <summary>
-      <span class="tt-emoji">{{ genre_emoji.get(item.category|lower, '📋') }}</span>
       <span class="tt-body">
         <span class="tt-title">{{ item.title }}</span>
         <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>
@@ -100,6 +99,7 @@
 <div class="modal" id="offer-modal" hidden>
   <div class="modal-card">
     <h2>Make an offer</h2>
+    <p class="muted co-hint" hidden>Adjust the number below — it's pre-filled with the offer you received.</p>
     <p class="muted">Requester's offer: <b>{{ item.requester_value }} ± {{ item.requester_buffer }}</b> credits.</p>
     <form method="post" action="/requests/{{ item.id }}/offer" class="modal-form">
       <input type="hidden" name="next" value="/chat/{{ item.id }}">
@@ -225,7 +225,18 @@ setInterval(async () => {
 function bindBubbleButtons() {
   box.querySelectorAll('[data-counter-offer]').forEach(b => b.addEventListener('click', () => {
     const modal = document.getElementById('offer-modal');
-    if (modal) modal.hidden = false;
+    if (!modal) return;
+    modal.hidden = false;
+    const amt = b.dataset.offerAmount;
+    const input = modal.querySelector('.opt-input');
+    const custom = modal.querySelector('input[name="mode"][value="custom"]');
+    if (custom) custom.checked = true;
+    if (input && amt) input.value = amt;
+    syncOptions();
+    const title = modal.querySelector('h2');
+    if (title) title.textContent = 'Counter-offer';
+    const hint = modal.querySelector('.co-hint');
+    if (hint) hint.hidden = false;
   }));
   box.querySelectorAll('[data-counter-settlement]').forEach(b => b.addEventListener('click', () => {
     const modal = document.getElementById('settlement-modal');

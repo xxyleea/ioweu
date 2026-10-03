@@ -24,6 +24,12 @@
     <h2>Task details</h2>
     <label>Task title<input id="new-title" name="title" placeholder="e.g. Help me assemble a bookshelf"></label>
     <label>Details<textarea id="new-description" name="description" placeholder="What needs doing, any tools needed, anything the helper should know"></textarea></label>
+    <label>How will it happen?</label>
+    <div class="time-mode">
+      <label class="radio-row"><input type="radio" name="task_mode" value="offline" id="tm-offline" checked> <b>In person</b> — someone comes over or meets you somewhere</label>
+      <label class="radio-row"><input type="radio" name="task_mode" value="online" id="tm-online"> <b>Online</b> — done over chat, call or screen-share</label>
+    </div>
+    <div id="location-block">
     <label>Where is the task?</label>
     <div class="addr-wrap">
       <input id="new-location" name="location" placeholder="e.g. Kennedy Town" autocomplete="off">
@@ -32,6 +38,7 @@
         <b>📍 Use my address</b><br><small>{{ user.district }}{{ ' · ' if user.address }}{{ user.address }}</small>
       </div>
       {% endif %}
+    </div>
     </div>
     <label>When should it happen?</label>
     <div class="time-mode">
@@ -65,8 +72,13 @@
     <h2>Preview your task</h2>
     <p class="muted">This is exactly what neighbours will see on the board.</p>
     <article class="card request-card" id="preview-card">
-      <div class="row"><div class="card-head"><span class="cat-dot" id="pv-dot"></span><small class="cat-name" id="pv-cat"></small><h2 id="pv-title"></h2><p id="pv-desc"></p><small class="muted" id="pv-meta"></small></div><span class="status s-open">open</span></div>
-      <p class="offer"><b>Your offer</b><span class="offer-num" id="pv-offer"></span> credits</p>
+      <div class="row">
+        <div class="card-head"><span class="cat-dot" id="pv-dot"></span><small class="cat-name" id="pv-cat"></small><h2 id="pv-title"></h2><p id="pv-desc"></p><small class="muted" id="pv-meta"></small></div>
+        <div class="badge-col">
+          <span class="status s-open">open</span>
+          <div class="pv-credits"><small class="muted">You offer</small><b><span id="pv-offer"></span><small> ± <span id="pv-buffer"></span></small></b><small class="muted">credits</small></div>
+        </div>
+      </div>
       <p class="ai-suggestion"><b>Neighbourhood reference</b><span class="offer-num" id="pv-rec"></span> credits <span id="pv-recrec"></span></p>
     </article>
     <div class="range-warning" id="range-warning" hidden>
@@ -109,6 +121,17 @@ const neededBy = document.querySelector("#needed-by");
 const preferredTime = document.querySelector("#preferred-time");
 const tmSpecific = document.querySelector("#tm-specific");
 const tmFlexible = document.querySelector("#tm-flexible");
+const tmOffline = document.querySelector("#tm-offline");
+const tmOnline = document.querySelector("#tm-online");
+const locationBlock = document.querySelector("#location-block");
+function syncTaskMode() {
+  const online = tmOnline.checked;
+  locationBlock.hidden = online;
+  if (online) { locationInput.value = "Online"; }
+  else if (locationInput.value === "Online") { locationInput.value = ""; }
+}
+tmOffline.addEventListener("change", syncTaskMode);
+tmOnline.addEventListener("change", syncTaskMode);
 const specificTimeRow = document.querySelector("#specific-time-row");
 const deadlineRow = document.querySelector("#deadline-row");
 const urgencyValue = document.querySelector("#urgency-value");
@@ -195,11 +218,13 @@ function buildPreview() {
   document.querySelector("#pv-desc").textContent = description.value;
   const meta = [];
   meta.push("requested by {{ user.name }}");
-  if (chosenLocation()) meta.push("📍 " + chosenLocation());
+  if (tmOnline.checked) meta.push("🌐 Online");
+  else if (chosenLocation()) meta.push("📍 " + chosenLocation());
   if (neededBy.value) meta.push("⏰ needed by " + neededBy.value);
   if (urgencyValue.value) meta.push(urgencyValue.value);
   document.querySelector("#pv-meta").textContent = meta.join(" · ");
-  document.querySelector("#pv-offer").textContent = offer.value + " ± " + buffer.value;
+  document.querySelector("#pv-offer").textContent = offer.value;
+  document.querySelector("#pv-buffer").textContent = buffer.value;
   if (recData) {
     document.querySelector("#pv-rec").textContent = recData.recommended;
     document.querySelector("#pv-recrec").textContent = "(" + recData.range[0] + "–" + recData.range[1] + " range)";
@@ -235,7 +260,7 @@ function validStep(i) {
   if (i === 1) {
     if (!title.value.trim()) { markInvalid(title); return false; }
     if (!description.value.trim()) { markInvalid(description); return false; }
-    if (!chosenLocation()) { markInvalid(locationInput); return false; }
+    if (!tmOnline.checked && !chosenLocation()) { markInvalid(locationInput); return false; }
   }
   if (i === 2 && !offer.value) { markInvalid(offer); return false; }
   return true;

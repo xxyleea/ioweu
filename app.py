@@ -271,6 +271,7 @@ def init_db() -> None:
             ("skills", "TEXT NOT NULL DEFAULT ''"),
             ("community_helper", "INTEGER NOT NULL DEFAULT 0"),
             ("created_at", "TEXT"),
+            ("consent_analytics", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in user_columns:
                 connection.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
@@ -1034,12 +1035,6 @@ def home(request: Request):
             "my_open": sum(1 for i in requests if i["requester_id"] == user["id"] and i["status"] not in ("completed", "resolved", "cancelled")),
             "helping": sum(1 for i in requests if i["provider_id"] == user["id"] and i["status"] not in ("completed", "resolved", "cancelled")),
         }
-        activity = connection.execute(
-            """SELECT t.created_at, t.value agreed_value, t.kudos_bonus, r.title,
-                      ru.name requester_name, pu.name provider_name
-               FROM transactions t JOIN requests r ON r.id=t.request_id
-               JOIN users ru ON ru.id=t.requester_id JOIN users pu ON pu.id=t.provider_id
-               ORDER BY t.created_at DESC LIMIT 6""").fetchall()
         history = load_history(connection, user["id"])
         # Only unresolved disputes belong in the moderator queue.
         disputes = [d for d in load_disputes(connection) if d["status"] == "open"]
@@ -1078,7 +1073,6 @@ def home(request: Request):
         recommended_tasks=recommended_tasks,
         matched_ids=matched_ids,
         counts=counts,
-        activity=activity,
         history=history,
         disputes=disputes,
         ledger=ledger,
@@ -1457,8 +1451,20 @@ def register(
     birthday: str = Form(""),
     language: str = Form("en"),
     skills: list[str] = Form([]),
+    consent_tos: str | None = Form(None),
+    consent_privacy: str | None = Form(None),
+    consent_guidelines: str | None = Form(None),
+    consent_competence: str | None = Form(None),
+    consent_analytics: str | None = Form(None),
 ):
     email = email.strip().lower()
+    if not all([consent_tos, consent_privacy, consent_guidelines, consent_competence]):
+        return render(
+            request,
+            "register.html",
+            error="Please confirm all required consents before creating your account.",
+            skill_tree=SKILL_TREE, genre_emoji=GENRE_EMOJI, hk_regions=HK_REGIONS,
+        )
     district = district.strip()
     if district and district not in HK_DISTRICTS:
         district = ""
@@ -1476,11 +1482,11 @@ def register(
         try:
             cursor = connection.execute(
                 """INSERT INTO users(name,email,password,balance,is_moderator,language,
-                   address,district,hkid,address_id,age,birthday,skills,created_at)
-                   VALUES (?,?,?,10,0,?,?,?,?,?,?,?,?,?)""",
+                   address,district,hkid,address_id,age,birthday,skills,created_at,consent_analytics)
+                   VALUES (?,?,?,10,0,?,?,?,?,?,?,?,?,?,?)""",
                 (name.strip(), email, hash_password(password), language,
                  address.strip(), district, hkid.strip(), district, age, birthday or None,
-                 ",".join(skills_clean), now()),
+                 ",".join(skills_clean), now(), 1 if consent_analytics else 0),
             )
             user_id = cursor.lastrowid
             ledger_entry(connection, user_id, None, "welcome_credit", 10,
@@ -1553,6 +1559,7 @@ def account_save(
     age: int | None = Form(None),
     birthday: str = Form(""),
     language: str = Form("en"),
+    consent_analytics: str | None = Form(None),
 ):
     user = current_user(request)
     if not user:
@@ -1562,9 +1569,9 @@ def account_save(
         district = ""
     with db() as connection:
         connection.execute(
-            "UPDATE users SET name=?, address=?, district=?, hkid=?, address_id=?, age=?, birthday=?, language=? WHERE id=?",
+            "UPDATE users SET name=?, address=?, district=?, hkid=?, address_id=?, age=?, birthday=?, language=?, consent_analytics=? WHERE id=?",
             (name.strip(), address.strip(), district, hkid.strip(), district, age,
-             birthday.strip() or None, language, user["id"]),
+             birthday.strip() or None, language, 1 if consent_analytics else 0, user["id"]),
         )
     return RedirectResponse("/account?saved=1", status_code=303)
 
