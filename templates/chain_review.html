@@ -207,13 +207,17 @@
   <h2>Your participation</h2>
   {% if me.selected_request_id %}
     <p class="success">You joined by picking a task to help with. You can leave at any time until the Circle activates.</p>
+    <form method="post" action="/chains/{{ proposal.id }}/respond" style="margin-top:.6rem">
+      <input type="hidden" name="response" value="declined">
+      <button class="btn-ghost danger btn-sm">Leave Circle</button>
+    </form>
   {% else %}
     <p class="muted">Pick one task below to join this Circle — choosing “I can help with this” is your commitment.</p>
+    <form method="post" action="/chains/{{ proposal.id }}/respond" style="margin-top:.6rem">
+      <input type="hidden" name="response" value="declined">
+      <button class="btn-ghost danger btn-sm">Not interested</button>
+    </form>
   {% endif %}
-  <form method="post" action="/chains/{{ proposal.id }}/respond" style="margin-top:.6rem">
-    <input type="hidden" name="response" value="declined">
-    <button class="btn-ghost danger btn-sm">Not interested</button>
-  </form>
 </section>
 {% endif %}
 
