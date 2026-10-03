@@ -70,17 +70,6 @@
   <div class="ws-actionbar {% if hero.actor == 'you' %}needs{% endif %}">
     {% if hero.actor == 'you' %}
       <span class="ws-alabel">{{ hero.label }}</span>
-      {% if item.status == 'completion_submitted' and item.requester_id == user.id %}
-      <button class="btn-primary" data-modal-open="review-modal">Review completion</button>
-      {% elif item.status == 'agreement_pending' %}
-      <form method="post" action="/requests/{{ item.id }}/confirm-exchange"><button class="btn-primary">Confirm Exchange</button></form>
-      {% elif hero.action %}
-        {% if hero.action.modal %}
-        <button class="btn-primary" data-modal-open="{{ hero.action.modal }}">{{ hero.action.text }}</button>
-        {% else %}
-        <a class="btn-primary" href="{{ hero.action.href }}">{{ hero.action.text }}</a>
-        {% endif %}
-      {% endif %}
     {% elif hero.actor == 'other' %}
       <span class="ws-alabel allset">✓ You're all set. <span class="muted">{{ hero.label }}</span></span>
     {% else %}
@@ -156,8 +145,9 @@
         </label>
         <label class="offer-option selected">
           <input type="radio" name="mode" value="custom" checked>
-          <span class="opt-title">Make an offer</span>
-          <input class="opt-input" type="number" name="amount" min="1" value="{{ rec.recommended }}">
+          <span class="opt-title">Counter with your own offer</span>
+          <input class="opt-input" type="number" name="amount" min="1" value="{{ rec.recommended }}" placeholder="Enter a number of credits">
+          <small class="muted opt-hint">Type a new offer — the other neighbour can accept it or counter back.</small>
         </label>
       </div>
       <p class="ai-suggestion"><b>✨ Neighbourhood reference</b><span class="offer-num">{{ rec.recommended }}</span> credits <span class="muted">({{ rec.range[0] }}–{{ rec.range[1] }} range)</span></p>
