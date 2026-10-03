@@ -16,7 +16,7 @@
   <h3>Evidence</h3>
   <ul class="evidence-list">
     {% for path in evidence %}
-    <li><a href="/static/uploads/{{ path }}" target="_blank">📎 Evidence {{ loop.index }}</a></li>
+    <li><a href="/uploads/{{ path }}" target="_blank">📎 Evidence {{ loop.index }}</a></li>
     {% endfor %}
   </ul>
   {% endif %}
@@ -24,20 +24,20 @@
 
 <section class="card">
   <h2>Your decision</h2>
-  <p class="muted">Confirming releases <b>{{ item.agreed_value }} credits</b> from escrow to {{ item.provider_name }}.</p>
+  <p class="muted">Confirming starts a three-day dispute window. <b>{{ item.agreed_value }} credits</b> stay held in escrow and are released automatically afterward unless a dispute is opened.</p>
   <div class="modal-actions">
     <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise Dispute</a>
-    <button class="btn-primary" data-modal-open="release-modal">Confirm Completion — release {{ item.agreed_value }} credits</button>
+    <button class="btn-primary" data-modal-open="release-modal">Confirm Completion</button>
   </div>
 </section>
 
 <div class="modal" id="release-modal" hidden>
   <div class="modal-card">
     <h2>Confirm completion?</h2>
-    <p>You are confirming the task was completed as agreed. <b>{{ item.agreed_value }} credits</b> will be released to {{ item.provider_name }}.</p>
+    <p>You are confirming the task was completed as agreed. <b>{{ item.agreed_value }} credits</b> will remain held for three days, then release to {{ item.provider_name }} unless a dispute is opened.</p>
     <form method="post" action="/requests/{{ item.id }}/review/confirm" class="modal-actions">
       <button type="button" class="btn-ghost" data-modal-close>Cancel</button>
-      <button class="btn-primary">Confirm & release</button>
+      <button class="btn-primary">Confirm & start hold</button>
     </form>
   </div>
 </div>

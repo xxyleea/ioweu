@@ -31,8 +31,8 @@
   <label id="refund-row">Refund amount (credits)
     <input type="number" name="refund_amount" min="0" max="{{ item.agreed_value }}" value="0">
   </label>
-  <label>Upload evidence (required)
-    <input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" required>
+  <label>Upload evidence (required, up to 5 files)
+    <input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" multiple required>
   </label>
   <div class="modal-actions">
     <a class="btn-ghost" href="/requests/{{ item.id }}/review">Back</a>

@@ -12,8 +12,11 @@
   <h2>Dispute details</h2>
   <p><b>Reason:</b> {{ dispute.reason or '—' }} · <b>Desired outcome:</b> {{ dispute.desired_outcome or '—' }}</p>
   <p>{{ dispute.description }}</p>
-  {% if dispute.evidence_path %}<p><a href="/static/uploads/{{ dispute.evidence_path }}" target="_blank">📎 View evidence</a></p>{% endif %}
+  {% set evidence = dispute.evidence_paths|from_json if dispute.evidence_paths else ([dispute.evidence_path] if dispute.evidence_path else []) %}
+  {% if evidence %}<p>Evidence:</p><ul>{% for path in evidence %}<li><a href="/uploads/{{ path }}" target="_blank">📎 View evidence {{ loop.index }}</a></li>{% endfor %}</ul>{% endif %}
+  {% if audits %}<details><summary>Evidence audit metadata</summary><ul>{% for audit in audits %}<li>{{ audit.filename }} · {{ audit.mime_type or 'unknown MIME' }} · {{ audit.byte_size }} bytes · SHA-256 {{ audit.sha256 }} · {{ audit.created_at }}</li>{% endfor %}</ul></details>{% endif %}
   <p class="muted">Requested refund: {{ dispute.requested_refund_amount }} · Requester: {{ item.requester_name }} · Helper: {{ item.provider_name }}</p>
+  <a class="btn-ghost" href="/moderator/requests/{{ item.id }}/policy">Configure dispute policy</a>
 </section>
 
 <section class="card">
@@ -42,6 +45,7 @@
     <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="deny"><button class="btn-ghost">No refund — helper keeps all</button></form>
     <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="partial"><button class="btn-primary">Partial refund ({{ dispute.requested_refund_amount // 2 }} credits)</button></form>
     <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="full"><button class="btn-ghost danger">Full refund ({{ item.agreed_value }} credits)</button></form>
+    <form method="post" action="/disputes/{{ dispute.id }}/decide"><input type="hidden" name="decision" value="freeze"><button class="btn-ghost">Keep credits frozen</button></form>
   </div>
 </section>
 {% else %}

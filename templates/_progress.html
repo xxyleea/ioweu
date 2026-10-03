@@ -5,7 +5,7 @@
   <p class="p4-sub muted">This exchange is being resolved — normal progress resumes afterwards.</p>
 </div>
 {% else %}
-{% set subs = [["Offer","Agreement"],["Meetup"],["Task"],["Review","Credits released"]] %}
+{% set subs = [["Offer","Agreement"],["Meetup"],["Task"],["Review","Dispute window","Credits released"]] %}
 <div class="progress4">
   {% for stage in stage_labels[:4] %}
   {% set i = loop.index0 %}

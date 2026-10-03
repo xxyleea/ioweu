@@ -4,10 +4,12 @@ import contextlib
 import hashlib
 import json
 import hmac
+import logging
 import os
 import secrets
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "ioweu.db"
@@ -147,7 +151,8 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS disputes (
                 id INTEGER PRIMARY KEY, request_id INTEGER UNIQUE NOT NULL,
                 opened_by INTEGER NOT NULL, description TEXT NOT NULL,
-                evidence_path TEXT, status TEXT NOT NULL DEFAULT 'open',
+                evidence_path TEXT, evidence_paths TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
                 recommendation TEXT, moderator_decision TEXT,
                 requested_refund_amount INTEGER NOT NULL DEFAULT 0,
                 requester_offer INTEGER, provider_offer INTEGER,
@@ -181,10 +186,23 @@ def init_db() -> None:
                 last_read_id INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(user_id, request_id)
             );
+            CREATE TABLE IF NOT EXISTS request_participants (
+                request_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(request_id, user_id),
+                FOREIGN KEY(request_id) REFERENCES requests(id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
             CREATE TABLE IF NOT EXISTS pins (
                 user_id INTEGER NOT NULL, request_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(user_id, request_id)
+            );
+            CREATE TABLE IF NOT EXISTS evidence_audits (
+                id INTEGER PRIMARY KEY, request_id INTEGER, dispute_id INTEGER,
+                filename TEXT NOT NULL, stored_path TEXT NOT NULL,
+                sha256 TEXT NOT NULL, mime_type TEXT, byte_size INTEGER NOT NULL,
+                screening_status TEXT NOT NULL, created_at TEXT NOT NULL
             );
             """
         )
@@ -219,6 +237,11 @@ def init_db() -> None:
             ("confirm_requester", "INTEGER NOT NULL DEFAULT 0"),
             ("confirm_provider", "INTEGER NOT NULL DEFAULT 0"),
             ("started_at", "TEXT"),
+            ("provider_completed_at", "TEXT"), ("requester_confirmed_at", "TEXT"),
+            ("release_at", "TEXT"), ("proof_path", "TEXT"), ("proof_status", "TEXT"),
+            ("dispute_eligible", "INTEGER NOT NULL DEFAULT 1"),
+            ("dispute_window_days", "INTEGER NOT NULL DEFAULT 3"),
+            ("settlement_value", "INTEGER"),
         ):
             if column not in columns:
                 connection.execute(f"ALTER TABLE requests ADD COLUMN {column} {definition}")
@@ -263,6 +286,8 @@ def init_db() -> None:
         ):
             if column not in dispute_columns:
                 connection.execute(f"ALTER TABLE disputes ADD COLUMN {column} {definition}")
+        if "evidence_paths" not in dispute_columns:
+            connection.execute("ALTER TABLE disputes ADD COLUMN evidence_paths TEXT")
         legacy_negotiations = connection.execute(
             """SELECT id, created_at FROM requests
                WHERE status='negotiating' AND negotiation_deadline IS NULL"""
@@ -291,6 +316,7 @@ def current_user(request: Request) -> sqlite3.Row | None:
     if not user_id:
         return None
     with db() as connection:
+        release_due_payments(connection)
         return connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
 
@@ -333,6 +359,10 @@ def recommendation(
             "benchmark": midpoint,
             "adjustments": {"effort": 1.0, "complexity": 1.0, "quality": 1.0},
             "sample_size": 0,
+            "explanation": (
+                f"No completed {category.lower()} comparisons are available yet; "
+                f"the fallback reference uses estimated effort of {effort_minutes} minutes."
+            ),
         }
     benchmark = rows[len(rows) // 2]["value"]
     measured_effort = [row["effort_minutes"] for row in rows if row["effort_minutes"]]
@@ -352,6 +382,11 @@ def recommendation(
             "quality": round(quality_factor, 2),
         },
         "sample_size": len(rows),
+        "explanation": (
+            f"Based on {len(rows)} comparable {category.lower()} task(s), "
+            f"estimated effort of {effort_minutes} minutes, complexity {complexity}/5, "
+            f"and a historical benchmark of {benchmark} credits."
+        ),
     }
 
 
@@ -425,6 +460,51 @@ def add_message(connection: sqlite3.Connection, request_id: int, sender_id: int 
     return cursor.lastrowid
 
 
+def screen_evidence(filename: str, content_type: str | None, data: bytes,
+                    connection: sqlite3.Connection) -> str:
+    suffix = Path(filename).suffix.lower()
+    allowed = {".png", ".jpg", ".jpeg", ".pdf", ".txt"}
+    if suffix not in allowed:
+        raise ValueError("Evidence must be a PNG, JPG, PDF, or TXT file.")
+    if not data or len(data) > 5 * 1024 * 1024:
+        raise ValueError("Evidence must be non-empty and smaller than 5 MB.")
+    signatures = {
+        ".png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+        ".jpg": data.startswith(b"\xff\xd8\xff"),
+        ".jpeg": data.startswith(b"\xff\xd8\xff"),
+        ".pdf": data.startswith(b"%PDF-"),
+        ".txt": True,
+    }
+    if not signatures[suffix]:
+        raise ValueError("Evidence content does not match its file type.")
+    if suffix in {".png", ".jpg", ".jpeg"} and content_type not in {
+        "image/png", "image/jpeg", "image/jpg"
+    }:
+        raise ValueError("Image evidence has an invalid MIME type.")
+    digest = hashlib.sha256(data).hexdigest()
+    duplicate = connection.execute(
+        "SELECT 1 FROM requests WHERE completion_evidence LIKE ? OR proof_path LIKE ? LIMIT 1",
+        (f"%{digest}%", f"%{digest}%"),
+    ).fetchone()
+    if duplicate:
+        raise ValueError("This evidence file was already submitted.")
+    stored = f"{digest}{suffix}"
+    connection.execute(
+        """INSERT INTO evidence_audits(filename,stored_path,sha256,mime_type,byte_size,
+           screening_status,created_at) VALUES (?,?,?,?,?,?,?)""",
+        (filename, stored, digest, content_type, len(data), "accepted", now()),
+    )
+    return stored
+
+
+def negotiation_bounds(item: sqlite3.Row, is_owner: bool) -> tuple[int, int]:
+    if is_owner and item["provider_value"] is not None:
+        value, buffer = item["provider_value"], item["provider_buffer"] or 0
+    else:
+        value, buffer = item["requester_value"], item["requester_buffer"] or 0
+    return max(1, value - buffer), value + buffer
+
+
 def notify(connection: sqlite3.Connection, user_id: int | None, body: str, link: str,
            kind: str = "info") -> None:
     if not user_id:
@@ -443,6 +523,7 @@ STATUS_LABELS = {
     "scheduled": "Scheduled",
     "in_progress": "In Progress",
     "completion_submitted": "Completion Submitted",
+    "completed_pending_release": "Dispute Window",
     "completed": "Completed",
     "disputed": "Disputed",
     "human_review": "Human Review",
@@ -500,10 +581,12 @@ def unread_message_count(connection: sqlite3.Connection, user_id: int) -> int:
         """SELECT COUNT(*) c FROM messages m
            JOIN requests r ON r.id=m.request_id
            LEFT JOIN thread_reads tr ON tr.request_id=m.request_id AND tr.user_id=?
-           WHERE (r.requester_id=? OR r.provider_id=?)
+           WHERE (r.requester_id=? OR r.provider_id=?
+                  OR EXISTS (SELECT 1 FROM request_participants rp
+                             WHERE rp.request_id=r.id AND rp.user_id=?))
              AND m.sender_id IS NOT NULL AND m.sender_id != ?
              AND m.id > COALESCE(tr.last_read_id, 0)""",
-        (user_id, user_id, user_id, user_id),
+        (user_id, user_id, user_id, user_id, user_id),
     ).fetchone()["c"]
 
 
@@ -559,6 +642,55 @@ def outside_range(connection: sqlite3.Connection, item: sqlite3.Row, value: int)
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    threading.Thread(target=_release_worker, name="escrow-release-worker", daemon=True).start()
+
+
+def _release_worker() -> None:
+    while True:
+        try:
+            with db() as connection:
+                release_due_payments(connection)
+                create_deadline_reminders(connection)
+        except sqlite3.Error:
+            logger.exception("Automatic escrow release failed")
+        time.sleep(30)
+
+
+def create_deadline_reminders(connection: sqlite3.Connection) -> None:
+    current = datetime.now(timezone.utc)
+    soon = (current + timedelta(days=1)).isoformat(timespec="seconds")
+    rows = connection.execute(
+        """SELECT * FROM requests
+           WHERE status='negotiating' AND negotiation_deadline IS NOT NULL
+             AND negotiation_deadline <= ?""",
+        (soon,),
+    ).fetchall()
+    for item in rows:
+        for user_id in (item["requester_id"], item["provider_id"]):
+            if not user_id:
+                continue
+            body = f"Negotiation deadline is approaching for \"{item['title']}\"."
+            exists = connection.execute(
+                "SELECT 1 FROM notifications WHERE user_id=? AND body=?",
+                (user_id, body),
+            ).fetchone()
+            if not exists:
+                notify(connection, user_id, body, f"/chat/{item['id']}", kind="action")
+    due = connection.execute(
+        """SELECT * FROM requests
+           WHERE status='completed_pending_release' AND release_at IS NOT NULL
+             AND release_at <= ? AND release_at > ?""",
+        (soon, now()),
+    ).fetchall()
+    for item in due:
+        body = f"Payment for \"{item['title']}\" will release after the dispute window."
+        exists = connection.execute(
+            "SELECT 1 FROM notifications WHERE user_id=? AND body=?",
+            (item["requester_id"], body),
+        ).fetchone()
+        if not exists:
+            notify(connection, item["requester_id"], body, f"/requests/{item['id']}", kind="info")
+            notify(connection, item["provider_id"], body, f"/requests/{item['id']}", kind="info")
 
 
 def load_board(connection: sqlite3.Connection):
@@ -581,6 +713,44 @@ def load_board(connection: sqlite3.Connection):
     return requests, recommendations
 
 
+def release_due_payments(connection: sqlite3.Connection) -> None:
+    due = connection.execute(
+        """SELECT * FROM requests
+           WHERE status='completed_pending_release' AND release_at IS NOT NULL
+             AND release_at <= ?
+             AND NOT EXISTS (
+                 SELECT 1 FROM disputes d
+                 WHERE d.request_id=requests.id AND d.status='open'
+             )""",
+        (now(),),
+    ).fetchall()
+    for item in due:
+        settle_exchange(
+            connection,
+            item,
+            0,
+            f"Payment released for {item['title']} after the dispute window",
+        )
+        connection.execute(
+            "UPDATE requests SET status='completed', settlement_value=NULL WHERE id=?",
+            (item["id"],),
+        )
+        add_message(
+            connection,
+            item["id"],
+            None,
+            "system",
+            f"The dispute window closed and {item['agreed_value']} credits were released.",
+        )
+        notify(
+            connection,
+            item["provider_id"],
+            f"Payment released for \"{item['title']}\".",
+            f"/requests/{item['id']}",
+            kind="success",
+        )
+
+
 def load_history(connection: sqlite3.Connection, user_id: int):
     return connection.execute(
         """SELECT t.*, r.title, u.name provider_name FROM transactions t
@@ -596,6 +766,83 @@ def load_disputes(connection: sqlite3.Connection):
            FROM disputes d JOIN requests r ON r.id=d.request_id
            JOIN users u ON u.id=d.opened_by ORDER BY d.id DESC"""
     ).fetchall()
+
+
+def build_exchange_matches(connection: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:
+    """Find small skill-compatible task chains without changing task ownership."""
+    users = connection.execute(
+        "SELECT id, name, skills FROM users"
+    ).fetchall()
+    user_by_id = {row["id"]: row for row in users}
+    requests = connection.execute(
+        """SELECT r.*, u.name requester_name FROM requests r
+           JOIN users u ON u.id=r.requester_id
+           WHERE r.status='open' AND r.provider_id IS NULL
+           ORDER BY r.created_at DESC"""
+    ).fetchall()
+    skills_by_user = {
+        row["id"]: {value.strip().lower() for value in (row["skills"] or "").split(",") if value.strip()}
+        for row in users
+    }
+    requester_rows = connection.execute(
+        "SELECT id, skills FROM users WHERE id IN (SELECT requester_id FROM requests WHERE status='open')"
+    ).fetchall()
+    skills_by_user.update({
+        row["id"]: {value.strip().lower() for value in (row["skills"] or "").split(",") if value.strip()}
+        for row in requester_rows
+    })
+
+    proposals: list[dict[str, Any]] = []
+    for first in requests:
+        first_helpers = [
+            candidate for candidate in users
+            if candidate["id"] != first["requester_id"]
+            and skills_by_user.get(candidate["id"], set())
+            & {value.lower() for value in SKILL_TREE.get(first["category"], ())}
+        ]
+        for helper in first_helpers:
+            second = next(
+                (item for item in requests
+                 if item["requester_id"] == helper["id"]
+                 and item["requester_id"] != first["requester_id"]
+                 and skills_by_user.get(first["requester_id"], set())
+                 & {value.lower() for value in SKILL_TREE.get(item["category"], ())}),
+                None,
+            )
+            if second:
+                proposals.append({
+                    "kind": "direct_or_chain",
+                    "members": [first["requester_name"], helper["name"]],
+                    "tasks": [first, second],
+                    "credit_difference": abs((first["requester_value"] or 0) - (second["requester_value"] or 0)),
+                    "explanation": "These residents have compatible needs and skills; the lower-valued task can be balanced with credits.",
+                })
+                third = next(
+                    (item for item in requests
+                     if item["requester_id"] not in {first["requester_id"], helper["id"]}
+                     and skills_by_user.get(item["requester_id"], set())
+                     & {value.lower() for value in SKILL_TREE.get(first["category"], ())}
+                     and skills_by_user.get(helper["id"], set())
+                     & {value.lower() for value in SKILL_TREE.get(item["category"], ())}
+                     and skills_by_user.get(first["requester_id"], set())
+                     & {value.lower() for value in SKILL_TREE.get(item["category"], ())}),
+                    None,
+                )
+                if third:
+                    proposals.append({
+                        "kind": "closed_chain",
+                        "members": [first["requester_name"], helper["name"], third["requester_name"]],
+                        "tasks": [first, second, third],
+                        "credit_difference": max(
+                            (item["requester_value"] or 0) for item in (first, second, third)
+                        ) - min((item["requester_value"] or 0) for item in (first, second, third)),
+                        "explanation": "This three-person loop can route help around the group; only unequal task values need credit balancing.",
+                    })
+    unique: dict[tuple[int, ...], dict[str, Any]] = {}
+    for proposal in proposals:
+        key = tuple(item["id"] for item in proposal["tasks"])
+        unique.setdefault(key, proposal)
+    return list(unique.values())[:20]
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -647,6 +894,7 @@ def home(request: Request):
                    WHERE provider_id=? AND status IN ('confirmed','scheduled','in_progress','completion_submitted')""",
                 (user["id"],)).fetchone()["s"],
         }
+        exchange_matches = build_exchange_matches(connection, user["id"])
     return render(
         request,
         "dashboard.html",
@@ -663,7 +911,18 @@ def home(request: Request):
         recommendations=recommendations,
         stats=stats,
         task_categories=TASK_CATEGORIES,
+        exchange_matches=exchange_matches,
     )
+
+
+@app.get("/exchange-matches", response_class=HTMLResponse)
+def exchange_matches(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        matches = build_exchange_matches(connection, user["id"])
+    return render(request, "exchange_matches.html", page="browse", matches=matches)
 
 
 @app.get("/history", response_class=HTMLResponse)
@@ -696,10 +955,12 @@ def notifications_page(request: Request, tab: str = "system"):
                FROM requests r
                JOIN users ru ON ru.id=r.requester_id
                LEFT JOIN users pu ON pu.id=r.provider_id
-               WHERE (r.requester_id=? OR r.provider_id=?)
+               WHERE (r.requester_id=? OR r.provider_id=?
+                      OR EXISTS (SELECT 1 FROM request_participants rp
+                                 WHERE rp.request_id=r.id AND rp.user_id=?))
                  AND EXISTS (SELECT 1 FROM messages WHERE request_id=r.id)
                ORDER BY last_at DESC""",
-            (user["id"], user["id"])).fetchall()
+            (user["id"], user["id"], user["id"])).fetchall()
     return render(request, "notifications.html", page="notifications",
                   notifs=notifs, threads=threads, tab=tab)
 
@@ -799,9 +1060,45 @@ def browse(request: Request):
     )
 
 
+@app.get("/recommended", response_class=HTMLResponse)
+def recommended_tasks(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        requests, recommendations = load_board(connection)
+    user_skills = [s for s in (user["skills"] or "").split(",") if s]
+    matched_genres = {g for g, subs in SKILL_TREE.items() if any(s in subs for s in user_skills)}
+    items = [
+        item for item in requests
+        if item["requester_id"] != user["id"] and item["provider_id"] is None
+        and item["category"] in matched_genres
+    ]
+    items.sort(key=lambda item: (item["urgency"] != "urgent", item["created_at"]), reverse=False)
+    return render(
+        request, "recommended.html", page="browse",
+        community_requests=items, recommendations=recommendations,
+        matched_ids={item["id"] for item in items}, matched_genres=matched_genres,
+        task_categories=TASK_CATEGORIES, genre_emoji=GENRE_EMOJI,
+        user_area=user["district"] or user["address_id"] or "",
+        user_district=(user["district"] or "").strip().lower(),
+    )
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return FileResponse(BASE_DIR / "static" / "favicon.svg", media_type="image/svg+xml")
+
+
+@app.get("/uploads/{filename}")
+def uploaded_file(request: Request, filename: str):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    safe_name = Path(filename).name
+    if safe_name != filename or not (UPLOAD_DIR / safe_name).is_file():
+        return render(request, "error.html", message="Evidence file not found.")
+    return FileResponse(UPLOAD_DIR / safe_name)
 
 
 @app.get("/register", response_class=HTMLResponse)
@@ -996,10 +1293,12 @@ def messages_page(request: Request):
                           AND m.id > COALESCE(tr.last_read_id, 0)) unread_count
                FROM requests r JOIN users u ON u.id=r.requester_id
                LEFT JOIN users p ON p.id=r.provider_id
-               WHERE (r.requester_id=? OR r.provider_id=?)
+               WHERE (r.requester_id=? OR r.provider_id=?
+                      OR EXISTS (SELECT 1 FROM request_participants rp
+                                 WHERE rp.request_id=r.id AND rp.user_id=?))
                  AND EXISTS (SELECT 1 FROM messages m WHERE m.request_id=r.id)
                ORDER BY last_at DESC""",
-            (user["id"], user["id"], user["id"], user["id"]),
+            (user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
         exchanges = []
         for t in threads:
@@ -1018,7 +1317,20 @@ def chat_page(request: Request, request_id: int):
     with db() as connection:
         expire_negotiations(connection)
         item = load_request(connection, request_id)
-        if not item or user["id"] not in (item["requester_id"], item["provider_id"] or 0):
+        is_participant = connection.execute(
+            "SELECT 1 FROM request_participants WHERE request_id=? AND user_id=?",
+            (request_id, user["id"]),
+        ).fetchone()
+        if item and item["status"] == "open" and item["requester_id"] != user["id"] and not is_participant:
+            connection.execute(
+                "INSERT OR IGNORE INTO request_participants(request_id,user_id,created_at) VALUES (?,?,?)",
+                (request_id, user["id"], now()),
+            )
+            is_participant = True
+        if not item or (
+            user["id"] not in (item["requester_id"], item["provider_id"] or 0)
+            and not is_participant
+        ):
             return render(request, "error.html", message="You are not part of this exchange.")
         messages = connection.execute(
             """SELECT m.*, u.name sender_name FROM messages m
@@ -1046,11 +1358,13 @@ def chat_page(request: Request, request_id: int):
                           AND m.id > COALESCE(tr.last_read_id, 0)) unread_count
                FROM requests r JOIN users u ON u.id=r.requester_id
                LEFT JOIN users p ON p.id=r.provider_id
-               WHERE (r.requester_id=? OR r.provider_id=?)
+               WHERE (r.requester_id=? OR r.provider_id=?
+                      OR EXISTS (SELECT 1 FROM request_participants rp
+                                 WHERE rp.request_id=r.id AND rp.user_id=?))
                  AND EXISTS (SELECT 1 FROM messages m WHERE m.request_id=r.id)
                ORDER BY (SELECT created_at FROM messages m WHERE m.request_id=r.id
                          ORDER BY m.created_at DESC, m.id DESC LIMIT 1) DESC""",
-            (user["id"], user["id"], user["id"], user["id"]),
+            (user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     return render(request, "chat.html", page="messages", item=item, messages=messages,
                   pending_offer=pending_offer, pending_meetup=pending_meetup,
@@ -1069,7 +1383,14 @@ def chat_feed(request: Request, request_id: int):
     with db() as connection:
         auto_resolve_reviews(connection)
         item = load_request(connection, request_id)
-        if not item or user["id"] not in (item["requester_id"], item["provider_id"] or 0):
+        participant = connection.execute(
+            "SELECT 1 FROM request_participants WHERE request_id=? AND user_id=?",
+            (request_id, user["id"]),
+        ).fetchone()
+        if not item or (
+            user["id"] not in (item["requester_id"], item["provider_id"] or 0)
+            and not participant
+        ):
             return HTMLResponse("", status_code=403)
         messages = connection.execute(
             """SELECT m.*, u.name sender_name FROM messages m
@@ -1092,7 +1413,15 @@ def chat_post(request: Request, request_id: int, body: str = Form(...)):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = connection.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
-        if item and user["id"] in (item["requester_id"], item["provider_id"] or 0) and body.strip():
+        participant = connection.execute(
+            "SELECT 1 FROM request_participants WHERE request_id=? AND user_id=?",
+            (request_id, user["id"]),
+        ).fetchone()
+        allowed = item and (
+            user["id"] in (item["requester_id"], item["provider_id"] or 0)
+            or (item["status"] == "open" and user["id"] != item["requester_id"] and participant)
+        )
+        if allowed and body.strip():
             add_message(connection, request_id, user["id"], "chat", body.strip())
     return RedirectResponse(f"/chat/{request_id}", status_code=303)
 
@@ -1331,6 +1660,10 @@ def hero_for(item, user_id, offer, meetup, dispute, my_confirm):
             return {"actor": "you", "label": "Completion submitted — please review it.",
                     "action": {"text": "Review Completion", "href": f"/requests/{rid}/review"}}
         return {"actor": "other", "label": "Waiting for the request owner to confirm.", "action": None}
+    if status == "completed_pending_release":
+        if involved:
+            return {"actor": "none", "label": "Completion confirmed. Credits remain held during the three-day dispute window.", "action": None}
+        return waiting
     if status == "disputed":
         if involved:
             return {"actor": "you", "label": "Dispute in progress. Credits are frozen — settle together or ask IoU to mediate.",
@@ -1361,6 +1694,7 @@ def exchange_flag(connection: sqlite3.Connection, item, user_id: int):
 @app.post("/requests/{request_id}/offer")
 def make_offer(request: Request, request_id: int, mode: str = Form(...),
                amount: int | None = Form(None), note: str = Form(""),
+               offer_buffer: int = Form(0),
                confirm_outside_range: str | None = Form(None),
                next: str = Form("")):
     user = current_user(request)
@@ -1378,6 +1712,15 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
         if not allowed:
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
         value = item["requester_value"] if mode == "accept" else max(1, amount or 1)
+        offer_buffer = max(0, offer_buffer)
+        if mode != "accept":
+            low, high = negotiation_bounds(item, is_owner)
+            if value < low or value > high:
+                return render(
+                    request,
+                    "error.html",
+                    message=f"That offer must be within the current negotiation range of {low}–{high} credits.",
+                )
         old = pending_message(connection, request_id, "offer")
         if old:
             connection.execute("UPDATE messages SET status='countered' WHERE id=?", (old["id"],))
@@ -1387,12 +1730,17 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
                    negotiation_deadline=? WHERE id=?""",
                 (user["id"], (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"), request_id),
             )
+            connection.execute(
+                "INSERT OR IGNORE INTO request_participants(request_id,user_id,created_at) VALUES (?,?,?)",
+                (request_id, user["id"], now()),
+            )
         role = "Requester" if is_owner else "Helper"
         if is_owner:
             connection.execute("UPDATE requests SET requester_value=? WHERE id=?", (value, request_id))
         else:
             connection.execute(
-                "UPDATE requests SET provider_value=?, provider_buffer=0 WHERE id=?", (value, request_id))
+                "UPDATE requests SET provider_value=?, provider_buffer=? WHERE id=?",
+                (value, offer_buffer, request_id))
         add_message(connection, request_id, user["id"], "offer",
                     f"{role} offered {value} credits",
                     meta=json.dumps({"amount": value, "note": note.strip()}), status="pending")
@@ -1607,18 +1955,25 @@ async def complete_submit(request: Request, request_id: int, note: str = Form(""
     if confirm_done != "1":
         return render(request, "error.html", message="Please tick the confirmation checkbox before submitting.")
     paths = []
-    for upload in evidence[:3]:
-        if not upload or not upload.filename:
-            continue
-        suffix = Path(upload.filename).suffix.lower()
-        if suffix not in {".png", ".jpg", ".jpeg", ".pdf", ".txt"}:
-            continue
-        data = await upload.read()
-        if len(data) > 5 * 1024 * 1024:
-            continue
-        filename = f"{secrets.token_hex(12)}{suffix}"
-        (UPLOAD_DIR / filename).write_bytes(data)
-        paths.append(filename)
+    with db() as connection:
+        for upload in evidence[:3]:
+            if not upload or not upload.filename:
+                continue
+            try:
+                data = await upload.read()
+                filename = screen_evidence(
+                    upload.filename, upload.content_type, data, connection
+                )
+            except ValueError as error:
+                return render(request, "error.html", message=str(error))
+            (UPLOAD_DIR / filename).write_bytes(data)
+            paths.append(filename)
+    if not paths:
+        return render(
+            request,
+            "error.html",
+            message="Please attach at least one completion evidence file (PNG, JPG, PDF, or TXT, up to 5MB).",
+        )
     with db() as connection:
         item = load_request(connection, request_id)
         if not item or item["provider_id"] != user["id"] or item["status"] != "in_progress":
@@ -1641,7 +1996,9 @@ def review_page(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = load_request(connection, request_id)
-        if not item or item["requester_id"] != user["id"] or item["status"] != "completion_submitted":
+        if (not item or item["requester_id"] != user["id"]
+                or item["status"] != "completion_submitted"
+                or not item["dispute_eligible"]):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
     return render(request, "review_completion.html", item=item)
 
@@ -1653,17 +2010,27 @@ def review_confirm(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = load_request(connection, request_id)
-        if not item or item["requester_id"] != user["id"] or item["status"] != "completion_submitted":
+        if (not item or item["requester_id"] != user["id"]
+                or item["status"] != "completion_submitted"
+                or not item["dispute_eligible"]):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
-        settle_exchange(connection, item, 0, "")
-        connection.execute("UPDATE requests SET status='completed', completed_at=? WHERE id=?",
-                           (now(), request_id))
+        release_at = (
+            datetime.now(timezone.utc) + timedelta(days=3)
+        ).isoformat(timespec="seconds")
+        connection.execute(
+            """UPDATE requests
+               SET status='completed_pending_release',
+                   requester_confirmed_at=?, completed_at=?, release_at=?,
+                   settlement_value=?
+               WHERE id=?""",
+            (now(), now(), release_at, item["agreed_value"], request_id),
+        )
         add_message(connection, request_id, None, "system",
-                    f"Task completed and {item['agreed_value']} credits released.")
+                    f"Task completion confirmed. {item['agreed_value']} credits remain held for three days in case of dispute.")
         notify(connection, item["provider_id"],
-               f"Completion confirmed — {item['agreed_value']} credits released to you.",
+               f"Completion confirmed — {item['agreed_value']} credits will be released after the three-day dispute window.",
                f"/requests/{request_id}", kind="success")
-    return redirect_toast(f"/chat/{request_id}", "✓ Task completed — credits released")
+    return redirect_toast(f"/chat/{request_id}", "✓ Completion confirmed — credits held for three days")
 
 
 @app.get("/requests/{request_id}/dispute", response_class=HTMLResponse)
@@ -1682,20 +2049,23 @@ def dispute_page(request: Request, request_id: int):
 async def dispute_submit(request: Request, request_id: int, reason: str = Form(...),
                          description: str = Form(...), desired_outcome: str = Form(...),
                          refund_amount: int = Form(0),
-                         evidence: UploadFile | None = File(None)):
+                         compensation: str = Form(""),
+                         evidence: list[UploadFile] = File(default=[])):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    path = None
-    if evidence and evidence.filename:
-        suffix = Path(evidence.filename).suffix.lower()
-        if suffix in {".png", ".jpg", ".jpeg", ".pdf", ".txt"}:
-            data = await evidence.read()
-            if len(data) <= 5 * 1024 * 1024:
-                filename = f"{secrets.token_hex(12)}{suffix}"
-                (UPLOAD_DIR / filename).write_bytes(data)
-                path = filename
-    if not path:
+    paths = []
+    for upload in evidence[:5]:
+        if upload.filename:
+            data = await upload.read()
+            try:
+                with db() as connection:
+                    path = screen_evidence(upload.filename, upload.content_type, data, connection)
+                (UPLOAD_DIR / path).write_bytes(data)
+                paths.append(path)
+            except ValueError as error:
+                return render(request, "error.html", message=str(error))
+    if not paths:
         return render(request, "error.html",
                       message="Please attach evidence (png, jpg, pdf or txt, up to 5MB) to open a dispute.")
     with db() as connection:
@@ -1705,14 +2075,24 @@ async def dispute_submit(request: Request, request_id: int, reason: str = Form(.
         refund = max(0, min(refund_amount, item["agreed_value"]))
         if desired_outcome == "full":
             refund = item["agreed_value"]
-        midpoint, spread = comparable_stats(connection, "general")
+        midpoint, spread = comparable_stats(connection, item["category"])
+        message_count = connection.execute(
+            "SELECT COUNT(*) FROM messages WHERE request_id=? AND kind IN ('chat','text')",
+            (item["id"],),
+        ).fetchone()[0]
+        prior_disputes = connection.execute(
+            """SELECT COUNT(*) FROM disputes d JOIN requests r ON r.id=d.request_id
+               WHERE d.status IN ('resolved','closed') AND r.category=?""",
+            (item["category"],),
+        ).fetchone()[0]
+        evidence_count = len(json.loads(dispute["evidence_paths"] or "[]")) if dispute["evidence_paths"] else 1
         rec_text = f"Agreed value {item['agreed_value']} credits; recent band {midpoint - spread}-{midpoint + spread}."
         connection.execute(
             """INSERT OR REPLACE INTO disputes(
-               request_id,opened_by,description,evidence_path,recommendation,
+               request_id,opened_by,description,evidence_path,evidence_paths,recommendation,
                requested_refund_amount,reason,desired_outcome,negotiation_status)
-               VALUES (?,?,?,?,?,?,?,?,'open')""",
-            (request_id, user["id"], description.strip(), path, rec_text,
+               VALUES (?,?,?,?,?,?,?,?,?,'open')""",
+            (request_id, user["id"], description.strip(), paths[0], json.dumps(paths), rec_text,
              refund, reason, desired_outcome),
         )
         connection.execute("UPDATE requests SET status='disputed' WHERE id=?", (request_id,))
@@ -1726,7 +2106,8 @@ async def dispute_submit(request: Request, request_id: int, reason: str = Form(.
 
 @app.post("/requests/{request_id}/settlement")
 def propose_settlement(request: Request, request_id: int, amount: int = Form(...),
-                       reason: str = Form("")):
+                       reason: str = Form(""), resolution: str = Form("refund"),
+                       compensation: str = Form("")):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -1740,9 +2121,16 @@ def propose_settlement(request: Request, request_id: int, amount: int = Form(...
         old = pending_message(connection, request_id, "settlement")
         if old:
             connection.execute("UPDATE messages SET status='countered' WHERE id=?", (old["id"],))
+        resolution = resolution if resolution in {"refund", "redo", "other"} else "refund"
+        label = (f"Proposed refund: {amount} credits" if resolution == "refund"
+                 else "Proposed redo/fix" if resolution == "redo"
+                 else f"Proposed alternative compensation: {compensation.strip() or 'to be agreed'}")
         add_message(connection, request_id, user["id"], "settlement",
-                    f"Proposed refund: {amount} credits" + (f" — {reason}" if reason else ""),
-                    meta=json.dumps({"amount": amount, "reason": reason}), status="pending")
+                    label + (f" — {reason}" if reason else ""),
+                    meta=json.dumps({"amount": amount, "reason": reason,
+                                     "resolution": resolution,
+                                     "compensation": compensation.strip()}),
+                    status="pending")
         notify(connection, other_party(item, user["id"]),
                f"Settlement proposal: {amount} credits refund.", f"/chat/{request_id}", kind="action")
     return RedirectResponse(f"/chat/{request_id}", status_code=303)
@@ -1761,16 +2149,33 @@ def respond_settlement(request: Request, message_id: int, action: str):
         if user["id"] not in (item["requester_id"], item["provider_id"] or 0):
             return RedirectResponse(f"/requests/{msg['request_id']}", status_code=303)
         if action == "accept":
-            amount = json.loads(msg["meta"] or "{}").get("amount", 0)
+            meta = json.loads(msg["meta"] or "{}")
+            amount = meta.get("amount", 0)
             connection.execute("UPDATE messages SET status='accepted' WHERE id=?", (message_id,))
-            settle_exchange(connection, item, amount, f"Settlement for request #{item['id']}")
-            connection.execute("UPDATE requests SET status='resolved', completed_at=? WHERE id=?",
-                               (now(), item["id"]))
-            connection.execute(
-                "UPDATE disputes SET status='resolved', negotiation_status='resolved', resolved_at=? WHERE request_id=?",
-                (now(), item["id"]))
+            if meta.get("resolution") == "redo":
+                connection.execute(
+                    """UPDATE requests SET status='in_progress', completion_note=NULL,
+                       completion_evidence=NULL, completed_at=NULL, release_at=NULL,
+                       settlement_value=NULL WHERE id=?""",
+                    (item["id"],),
+                )
+                connection.execute(
+                    "UPDATE disputes SET status='resolved', negotiation_status='redo_agreed', resolved_at=? WHERE request_id=?",
+                    (now(), item["id"]),
+                )
+            else:
+                settle_exchange(connection, item, amount, f"Settlement for request #{item['id']}")
+                connection.execute("UPDATE requests SET status='resolved', completed_at=? WHERE id=?",
+                                   (now(), item["id"]))
+                connection.execute(
+                    "UPDATE disputes SET status='resolved', negotiation_status='resolved', resolved_at=? WHERE request_id=?",
+                    (now(), item["id"]))
             add_message(connection, item["id"], None, "system",
-                        f"Both participants agreed on a settlement ({amount} credits refunded).")
+                        "Both participants agreed that the task should be redone or fixed."
+                        if meta.get("resolution") == "redo"
+                        else f"Both participants agreed to alternative compensation: {meta.get('compensation')}"
+                        if meta.get("resolution") == "other"
+                        else f"Both participants agreed on a settlement ({amount} credits refunded).")
             notify(connection, other_party(item, user["id"]),
                    "Your dispute has been resolved by agreement.", f"/requests/{item['id']}", kind="success")
         elif action == "decline":
@@ -1784,7 +2189,21 @@ def respond_settlement(request: Request, message_id: int, action: str):
 def mediation_suggestion(connection: sqlite3.Connection, item: sqlite3.Row, dispute: sqlite3.Row) -> dict:
     agreed = item["agreed_value"] or 0
     requested = dispute["requested_refund_amount"] or 0
-    midpoint, spread = comparable_stats(connection, "general")
+    midpoint, spread = comparable_stats(connection, item["category"])
+    message_count = connection.execute(
+        "SELECT COUNT(*) FROM messages WHERE request_id=? AND kind IN ('chat','text')",
+        (item["id"],),
+    ).fetchone()[0]
+    prior_disputes = connection.execute(
+        """SELECT COUNT(*) FROM disputes d
+           JOIN requests r ON r.id=d.request_id
+           WHERE d.status IN ('resolved','closed') AND r.category=?""",
+        (item["category"],),
+    ).fetchone()[0]
+    evidence_paths = dispute["evidence_paths"] if "evidence_paths" in dispute.keys() else None
+    evidence_count = len(json.loads(evidence_paths or "[]")) if evidence_paths else (
+        1 if dispute["evidence_path"] else 0
+    )
     if requested >= agreed:
         suggested = max(1, round(agreed * 0.6))
     else:
@@ -1792,8 +2211,10 @@ def mediation_suggestion(connection: sqlite3.Connection, item: sqlite3.Row, disp
     suggested = max(0, min(suggested, agreed))
     reason = (
         f"The agreed value was {agreed} credits, and the requester asked for a {requested} credit refund. "
-        f"Recent comparable tasks settled around {midpoint} credits (band {midpoint - spread}–{midpoint + spread}). "
-        f"Balancing the requested refund against the value of work done suggests a {suggested} credit refund."
+        f"Recent comparable {item['category']} tasks settled around {midpoint} credits (band {midpoint - spread}–{midpoint + spread}). "
+        f"The task description, complaint, {message_count} chat messages, and {evidence_count} evidence file(s) were considered. "
+        f"The platform has {prior_disputes} resolved disputes in this category. "
+        f"Balancing these signals against the value of work done suggests a {suggested} credit refund."
     )
     return {"amount": suggested, "reason": reason}
 
@@ -1885,9 +2306,42 @@ def dispute_review_page(request: Request, dispute_id: int):
         messages = connection.execute(
             "SELECT m.*, u.name sender_name FROM messages m LEFT JOIN users u ON u.id=m.sender_id WHERE m.request_id=? ORDER BY m.created_at, m.id",
             (dispute["rid"],)).fetchall()
+        audits = connection.execute(
+            "SELECT * FROM evidence_audits WHERE stored_path IN (?, ?, ?, ?, ?)",
+            tuple((json.loads(dispute["evidence_paths"] or "[]") if dispute["evidence_paths"]
+                   else [dispute["evidence_path"]]) + [None] * 5)[:5],
+        ).fetchall()
         suggestion = mediation_suggestion(connection, item, dispute)
     return render(request, "dispute_review.html", dispute=dispute, item=item,
-                  messages=messages, suggestion=suggestion)
+                  messages=messages, suggestion=suggestion, audits=audits)
+
+
+@app.get("/moderator/requests/{request_id}/policy", response_class=HTMLResponse)
+def dispute_policy_page(request: Request, request_id: int):
+    user = current_user(request)
+    if not user or not user["is_moderator"]:
+        return RedirectResponse("/", status_code=303)
+    with db() as connection:
+        item = load_request(connection, request_id)
+    if not item:
+        return render(request, "error.html", message="Request not found.")
+    return render(request, "dispute_policy.html", item=item)
+
+
+@app.post("/moderator/requests/{request_id}/policy")
+def update_dispute_policy(request: Request, request_id: int,
+                          eligible: str = Form("1"),
+                          window_days: int = Form(3)):
+    user = current_user(request)
+    if not user or not user["is_moderator"]:
+        return RedirectResponse("/", status_code=303)
+    window_days = max(0, min(window_days, 30))
+    with db() as connection:
+        connection.execute(
+            "UPDATE requests SET dispute_eligible=?, dispute_window_days=? WHERE id=?",
+            (1 if eligible == "1" else 0, window_days, request_id),
+        )
+    return redirect_toast(f"/requests/{request_id}", "Dispute policy updated")
 
 
 @app.post("/disputes/{dispute_id}/decide")
@@ -1900,6 +2354,37 @@ def decide_dispute(request: Request, dispute_id: int, decision: str = Form(...))
             "SELECT d.*, r.agreed_value, r.requester_id, r.provider_id, r.id rid FROM disputes d JOIN requests r ON r.id=d.request_id WHERE d.id=?",
             (dispute_id,)).fetchone()
         if dispute and dispute["status"] == "open":
+            if decision == "freeze":
+                connection.execute(
+                    "UPDATE disputes SET moderator_decision='freeze', negotiation_status='frozen', review_since=? WHERE id=?",
+                    (now(), dispute_id),
+                )
+                connection.execute(
+                    "UPDATE requests SET status='human_review' WHERE id=?",
+                    (dispute["rid"],),
+                )
+                add_message(
+                    connection,
+                    dispute["rid"],
+                    None,
+                    "system",
+                    "A moderator kept the credits frozen pending further evidence.",
+                )
+                notify(
+                    connection,
+                    dispute["requester_id"],
+                    "A moderator kept your dispute frozen pending further evidence.",
+                    f"/requests/{dispute['rid']}",
+                    kind="action",
+                )
+                notify(
+                    connection,
+                    dispute["provider_id"],
+                    "A moderator kept the dispute frozen pending further evidence.",
+                    f"/requests/{dispute['rid']}",
+                    kind="action",
+                )
+                return RedirectResponse("/", status_code=303)
             refund = {"deny": 0, "partial": dispute["requested_refund_amount"] // 2,
                       "full": dispute["requested_refund_amount"]}.get(decision, 0)
             item = load_request(connection, dispute["rid"])
@@ -1926,10 +2411,22 @@ def dispute_after(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = load_request(connection, request_id)
-        if not item or item["status"] not in ("completed", "resolved"):
+        if not item or item["status"] not in ("completed", "completed_pending_release"):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
         if user["id"] not in (item["requester_id"], item["provider_id"] or 0):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        if not item["dispute_eligible"]:
+            return render(request, "error.html", message="This task is not eligible for post-completion disputes.")
+        if item["status"] == "completed":
+            if not item["completed_at"]:
+                return RedirectResponse(f"/requests/{request_id}", status_code=303)
+            completed_at = datetime.fromisoformat(item["completed_at"])
+            if datetime.now(timezone.utc) > completed_at + timedelta(days=item["dispute_window_days"] or 3):
+                return render(
+                    request,
+                    "error.html",
+                    message="The three-day dispute window for this exchange has closed.",
+                )
         existing = connection.execute(
             "SELECT id FROM disputes WHERE request_id=? AND status='open'", (request_id,)).fetchone()
         if not existing:
@@ -1938,7 +2435,10 @@ def dispute_after(request: Request, request_id: int):
                    VALUES (?,?,'After-completion dispute (no escrow held)','human_review',?)""",
                 (request_id, user["id"], now()),
             )
-            connection.execute("UPDATE requests SET status='human_review' WHERE id=?", (request_id,))
+            connection.execute(
+                "UPDATE requests SET status='human_review' WHERE id=?",
+                (request_id,),
+            )
             add_message(connection, request_id, None, "system",
                         "A dispute was opened after completion and sent to a community moderator.")
             notify(connection, other_party(item, user["id"]),

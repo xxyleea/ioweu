@@ -12,7 +12,8 @@
   <h2>The dispute</h2>
   <p><b>Reason:</b> {{ dispute.reason or '—' }}</p>
   <p>{{ dispute.description }}</p>
-  {% if dispute.evidence_path %}<p><a href="/static/uploads/{{ dispute.evidence_path }}" target="_blank">📎 View evidence</a></p>{% endif %}
+  {% set evidence = dispute.evidence_paths|from_json if dispute.evidence_paths else ([dispute.evidence_path] if dispute.evidence_path else []) %}
+  {% if evidence %}<p>Evidence:</p><ul>{% for path in evidence %}<li><a href="/uploads/{{ path }}" target="_blank">📎 View evidence {{ loop.index }}</a></li>{% endfor %}</ul>{% endif %}
   <p class="muted">Requested refund: {{ dispute.requested_refund_amount }} credits</p>
 </section>
 

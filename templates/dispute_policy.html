@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}IoU · Dispute policy{% endblock %}
+{% block content %}
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
+  <h1 style="margin-top:.8rem">Dispute policy</h1>
+  <p class="muted">{{ item.title }}</p>
+</div></header>
+<form class="card form-card" method="post">
+  <label class="check-row">
+    <input type="checkbox" name="eligible" value="1" {% if item.dispute_eligible %}checked{% endif %}>
+    Allow disputes for this task
+  </label>
+  <label>Dispute window (days)
+    <input type="number" name="window_days" min="0" max="30" value="{{ item.dispute_window_days or 3 }}">
+  </label>
+  <p class="muted">This policy controls requester dispute access after completion confirmation.</p>
+  <button class="btn-primary">Save policy</button>
+</form>
+{% endblock %}

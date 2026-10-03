@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}IoU · Exchange matches{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <a class="btn-ghost btn-back" href="/">← Home</a>
+    <h1 style="margin-top:.8rem">Direct exchanges &amp; chains</h1>
+    <p class="muted">Optional matches that may reduce credit movement. Every task still uses its normal chat, agreement, escrow, completion, and dispute safeguards.</p>
+  </div>
+</header>
+
+<section class="card">
+  <h2>How this works</h2>
+  <p>IoU looks for residents whose open needs and skills can connect. If task values differ, only the credit difference needs to be negotiated. These are recommendations, not automatic assignments.</p>
+</section>
+
+<div class="stack">
+{% for match in matches %}
+  <section class="card">
+    <span class="status s-confirmed">{{ match.kind|replace('_', ' ')|title }}</span>
+    <h2>{{ match.members|join(' → ') }}</h2>
+    <ol>
+      {% for task in match.tasks %}
+      <li><a href="/requests/{{ task.id }}">{{ task.title }}</a> — {{ task.requester_value }} credits requested</li>
+      {% endfor %}
+    </ol>
+    <p class="muted">{{ match.explanation }}</p>
+    <p><b>Potential credit balancing amount:</b> {{ match.credit_difference }} credits</p>
+    <p class="muted small">Open each task to ask questions, negotiate, and accept independently.</p>
+  </section>
+{% else %}
+  <section class="card empty-card">
+    <p class="empty">No compatible open task matches were found yet. Add skills, post a need, or check back when more neighbours join.</p>
+    <a class="btn-primary" href="/browse">Browse open tasks</a>
+  </section>
+{% endfor %}
+</div>
+{% endblock %}

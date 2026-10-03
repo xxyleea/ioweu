@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}IoU · Recommended tasks{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <a class="btn-ghost btn-back" href="/browse">← Community board</a>
+    <h1 style="margin-top:.8rem">Recommended for you</h1>
+    <p class="muted">Open tasks matched to your saved skills. Pricing references are shown on each task.</p>
+  </div>
+</header>
+<div class="card-grid">
+{% for item in community_requests %}
+  <div class="grid-item">{% include "browse_card.html" %}</div>
+{% else %}
+  <div class="card empty-card"><p class="empty">No skill-matched tasks are open right now. Add more skills or browse all tasks.</p><a class="btn-primary" href="/onboarding/skills?next=/recommended">Update skills</a></div>
+{% endfor %}
+</div>
+{% endblock %}

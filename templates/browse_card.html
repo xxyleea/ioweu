@@ -12,6 +12,9 @@
           {% if item.location %} · 📍 {{ item.location }}{% endif %}
         </small>
         <span class="browse-offer"><b>{{ item.requester_value }}</b> credits offered</span>
+        {% if recommendations is defined and item.id in recommendations %}
+        <small class="muted">Reference: {{ recommendations[item.id].range[0] }}–{{ recommendations[item.id].range[1] }} credits</small>
+        {% endif %}
       </div>
       <div class="badge-col">
         {% if matched_ids is defined and item.id in matched_ids %}<span class="match-badge">★ For you</span>{% endif %}
