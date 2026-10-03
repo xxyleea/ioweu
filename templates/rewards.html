@@ -29,7 +29,7 @@
 {% endif %}
 
 <section class="card rw-hero">
-  <span class="rw-hero-emoji">✨</span>
+  <span class="rw-hero-emoji rw-ic" style="width:44px;height:44px">{{ rw_icon("surprises") }}</span>
   <div>
     <span class="stat-label">Your credits</span>
     <span class="rw-hero-num">{{ user.balance }}</span>
@@ -67,7 +67,7 @@
   <h2 class="section-title">Browse rewards</h2>
   <div class="filter-row" id="rw-chips">
     {% for key, label in categories %}
-    <button class="filter-chip {% if key == 'all' %}active{% endif %}" data-rw-cat="{{ key }}">{{ label }}</button>
+    <button class="filter-chip {% if key == 'all' %}active{% endif %}" data-rw-cat="{{ key }}">{% if key == 'all' %}<span class="rw-ic-sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></span>{% else %}<span class="rw-ic-sm">{{ rw_icon(key) }}</span>{% endif %}{{ label }}</button>
     {% endfor %}
   </div>
   <div class="rw-grid">
@@ -173,7 +173,7 @@
 <!-- claimed moment -->
 <div class="modal" id="rw-claimed" hidden>
   <div class="modal-card rw-claimed-card">
-    <p class="rw-kicker">✨ Reward unlocked</p>
+    <p class="rw-kicker">Reward unlocked</p>
     <span class="rw-ic">{{ rw_icon(claimed.category) }}</span>
     <h2>{{ claimed.title }}</h2>
     <p class="muted">You spent {{ claimed.credits_spent }} credits. You now have <b>{{ user.balance }}</b> credits.</p>
