@@ -69,8 +69,20 @@
       <h2>Circle</h2>
       <form method="post" action="/account">
         <input type="hidden" name="name" value="{{ user.name }}">
-        <label class="check-row"><input type="checkbox" name="circle_enabled" value="1" {% if user.circle_enabled %}checked{% endif %}> Circle suggestions — tell me when nearby tasks could form a help loop</label>
-        <button class="btn-ghost">Save Circle preference</button>
+        <label class="check-row"><input type="checkbox" name="circle_enabled" value="1" {% if user.circle_enabled %}checked{% endif %}> <b>Circle suggestions</b> — let IoU suggest reciprocal help loops when compatible nearby tasks are available</label>
+        <label class="check-row"><input type="checkbox" name="circle_notifications" value="1" {% if user.circle_notifications %}checked{% endif %}> <b>Circle notifications</b> — selections, start proposals, completions and recovery</label>
+        <label class="check-row"><input type="checkbox" name="circle_community_only" value="1" {% if user.circle_community_only %}checked{% endif %}> <b>Community-only Circles</b> — only match with neighbours from my private coded community</label>
+        <label>Maximum Circle distance
+          <select name="circle_max_distance_km">
+            {% for km in [0.5, 1, 2, 5, 10] %}
+            <option value="{{ km }}" {% if user.circle_max_distance_km == km %}selected{% endif %}>{{ km }} km</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Circle availability <small class="muted">helps matching, but does not guarantee availability</small>
+          <input name="circle_availability" value="{{ user.circle_availability or '' }}" placeholder="e.g. weekday evenings, Saturday mornings">
+        </label>
+        <button class="btn-ghost">Save Circle preferences</button>
       </form>
     </div>
 

@@ -214,6 +214,555 @@ def is_blocked(connection: sqlite3.Connection, a: int, b: int) -> bool:
         (a, b, b, a)).fetchone())
 
 
+CIRCLE_MAX_MEMBERS = 4
+CIRCLE_MIN_MEMBERS = 2
+CIRCLE_PENDING_HOURS = 72
+# Spec 62: backend Circle statuses.
+CIRCLE_STATUSES = (
+    "pending", "start_confirming", "active", "recovery", "operationally_complete",
+    "fully_settled", "dissolved", "breaking", "broken_settled",
+)
+# Spec 64: task reservation states.
+RESERVATION_PUBLIC = "public"
+RESERVATION_CIRCLE = "circle_reserved"
+RESERVATION_ACTIVE = "active_circle"
+RESERVATION_RELEASED = "released"
+RESERVATION_EXPIRED = "expired"
+# Spec 63: member statuses.
+MEMBER_PENDING = "pending"
+MEMBER_SELECTED = "selected"
+MEMBER_START_CONFIRMING = "start_confirming"
+MEMBER_ACTIVE = "active"
+MEMBER_FULFILLED = "fulfilled"
+MEMBER_WITHDRAWAL_REQUESTED = "withdrawal_requested"
+MEMBER_REMOVED = "removed"
+MEMBER_GONE = (MEMBER_REMOVED,)
+# Spec 45: withdrawal reliability penalties (configurable).
+CIRCLE_WITHDRAW_BEFORE_HELP = -5
+CIRCLE_WITHDRAW_AFTER_HELP = -10
+# Spec 40: thumbs-up bonus is 10% of the owner's original proposed value.
+CIRCLE_BONUS_RATE = 0.10
+
+
+def circle_row(connection: sqlite3.Connection, circle_id: int):
+    return connection.execute(
+        "SELECT * FROM chain_proposals WHERE id=?", (circle_id,)).fetchone()
+
+
+def circle_member_rows(connection: sqlite3.Connection, circle_id: int,
+                       include_removed: bool = False) -> list[sqlite3.Row]:
+    rows = connection.execute(
+        """SELECT cm.*, u.name FROM chain_members cm JOIN users u ON u.id=cm.user_id
+           WHERE cm.proposal_id=? ORDER BY cm.position, cm.user_id""", (circle_id,)).fetchall()
+    if include_removed:
+        return rows
+    return [r for r in rows
+            if r["response"] != "declined" and (r["status"] or MEMBER_PENDING) not in MEMBER_GONE]
+
+
+def member_row(connection: sqlite3.Connection, circle_id: int, user_id: int):
+    return connection.execute(
+        "SELECT * FROM chain_members WHERE proposal_id=? AND user_id=?",
+        (circle_id, user_id)).fetchone()
+
+
+def circle_task_rows(connection: sqlite3.Connection, circle_id: int) -> list[sqlite3.Row]:
+    """Every task carried by the Circle, with its owner and selection state (spec 12)."""
+    return connection.execute(
+        """SELECT r.id request_id, r.title, r.description, r.category, r.location,
+                  r.needed_by, r.preferred_time, r.urgency, r.duration_minutes,
+                  r.status request_status, r.requester_value, r.reservation_status,
+                  r.selected_by_user_id, r.was_ever_reserved, r.requester_id,
+                  u.name owner_name, s.name selected_by_name
+           FROM chain_members cm
+           JOIN requests r ON r.id=cm.request_id
+           JOIN users u ON u.id=cm.user_id
+           LEFT JOIN users s ON s.id=r.selected_by_user_id
+           WHERE cm.proposal_id=? AND cm.response != 'declined'
+             AND COALESCE(cm.status,'pending') != 'removed'
+           ORDER BY cm.position, cm.user_id""", (circle_id,)).fetchall()
+
+
+def task_owner_map(connection: sqlite3.Connection, circle_id: int) -> dict[int, int]:
+    return {row["request_id"]: row["user_id"] for row in connection.execute(
+        """SELECT request_id, user_id FROM chain_members
+           WHERE proposal_id=? AND response!='declined'
+             AND COALESCE(status,'pending')!='removed'""", (circle_id,))}
+
+
+def circle_adjacency(connection: sqlite3.Connection, circle_id: int) -> dict[int, int]:
+    """Spec 20/68: each selection is an arrow provider -> task owner."""
+    owners = task_owner_map(connection, circle_id)
+    adjacency: dict[int, int] = {}
+    for row in connection.execute(
+        """SELECT user_id, selected_request_id FROM chain_members
+           WHERE proposal_id=? AND response!='declined'
+             AND COALESCE(status,'pending')!='removed'
+             AND selected_request_id IS NOT NULL""", (circle_id,)):
+        owner = owners.get(row["selected_request_id"])
+        # Nobody may help themselves, and a task outside the live Circle is ignored.
+        if owner and owner != row["user_id"]:
+            adjacency[row["user_id"]] = owner
+    return adjacency
+
+
+def find_cycles(adjacency: dict[int, int],
+                min_len: int = CIRCLE_MIN_MEMBERS,
+                max_len: int = CIRCLE_MAX_MEMBERS) -> list[list[int]]:
+    """Return every simple directed cycle of length min_len..max_len.
+
+    `adjacency` is a functional graph (a member selects at most one task), so a
+    path that returns to its start is a closed loop where every included node has
+    indegree 1 and outdegree 1 — exactly the spec 22 viability rule.
+    """
+    found: list[list[int]] = []
+    for start in sorted(adjacency):
+        stack: list[tuple[int, list[int]]] = [(start, [start])]
+        while stack:
+            node, path = stack.pop()
+            nxt = adjacency.get(node)
+            if nxt is None:
+                continue
+            if nxt == start:
+                if min_len <= len(path) <= max_len:
+                    found.append(list(path))
+                continue
+            if nxt in path or len(path) >= max_len:
+                continue
+            stack.append((nxt, path + [nxt]))
+    seen: set[tuple[int, ...]] = set()
+    unique: list[list[int]] = []
+    for cycle in found:
+        key = min(tuple(cycle[i:] + cycle[:i]) for i in range(len(cycle)))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(cycle)
+    return unique
+
+
+def viable_cycles(connection: sqlite3.Connection, circle_id: int) -> list[list[int]]:
+    return find_cycles(circle_adjacency(connection, circle_id))
+
+
+def cycle_mapping(connection: sqlite3.Connection, circle_id: int,
+                  cycle: list[int]) -> list[dict[str, Any]]:
+    """Turn a cycle of user ids into concrete 'X helps Y with task Z' rows."""
+    owners = task_owner_map(connection, circle_id)
+    owned_by_user = {user_id: request_id for request_id, user_id in owners.items()}
+    values = {row["id"]: (row["requester_value"] or 0) for row in connection.execute(
+        "SELECT id, requester_value FROM requests")}
+    mapping = []
+    for index, provider in enumerate(cycle):
+        recipient = cycle[(index + 1) % len(cycle)]
+        request_id = owned_by_user.get(recipient)
+        if not request_id:
+            return []
+        mapping.append({
+            "provider": provider, "recipient": recipient,
+            "request_id": request_id, "value": values.get(request_id, 0),
+        })
+    return mapping
+
+
+def connection_name(connection: sqlite3.Connection, user_id: int) -> str:
+    row = connection.execute("SELECT name FROM users WHERE id=?", (user_id,)).fetchone()
+    return row["name"] if row else "A neighbour"
+
+
+def invalidate_start_proposal(connection: sqlite3.Connection, circle_id: int) -> None:
+    """Spec 26: any assignment change cancels the proposal and resets confirmations."""
+    proposal = connection.execute(
+        """SELECT * FROM circle_start_proposals WHERE circle_id=? AND status='proposed'
+           ORDER BY id DESC LIMIT 1""", (circle_id,)).fetchone()
+    if not proposal:
+        return
+    connection.execute(
+        "UPDATE circle_start_proposals SET status='cancelled' WHERE id=?", (proposal["id"],))
+    connection.execute(
+        "UPDATE chain_members SET start_confirmed=0 WHERE proposal_id=?", (circle_id,))
+    circle = circle_row(connection, circle_id)
+    if circle and circle["status"] == "start_confirming":
+        connection.execute(
+            "UPDATE chain_proposals SET status='pending' WHERE id=?", (circle_id,))
+    for member in circle_member_rows(connection, circle_id):
+        notify(connection, member["user_id"],
+               "Assignments changed. Start confirmations have been reset.",
+               f"/chains/{circle_id}", kind="info")
+
+
+def _selection_checks(connection: sqlite3.Connection, circle_id: int,
+                      user_id: int, request_id: int) -> tuple[sqlite3.Row, sqlite3.Row, str]:
+    """Shared validation for select/switch. Returns (circle, target, error)."""
+    circle = circle_row(connection, circle_id)
+    if not circle or circle["status"] not in ("pending", "start_confirming"):
+        return circle, None, "This Circle is no longer open for selection."
+    me = member_row(connection, circle_id, user_id)
+    if not me:
+        return circle, None, "You are not part of this Circle."
+    if me["response"] == "declined" or (me["status"] or MEMBER_PENDING) in MEMBER_GONE:
+        return circle, None, "You have left this Circle."
+    target = connection.execute(
+        """SELECT r.* FROM chain_members cm JOIN requests r ON r.id=cm.request_id
+           WHERE cm.proposal_id=? AND cm.request_id=?""", (circle_id, request_id)).fetchone()
+    if not target:
+        return circle, None, "That task is not part of this Circle."
+    if target["requester_id"] == user_id:
+        return circle, None, "You cannot select your own task."
+    if target["reservation_status"] == RESERVATION_ACTIVE:
+        return circle, None, "That task is already locked inside an active Circle."
+    if target["status"] != "open":
+        return circle, None, "That task is no longer available."
+    if (target["reservation_status"] == RESERVATION_CIRCLE
+            and target["selected_by_user_id"]
+            and target["selected_by_user_id"] != user_id):
+        holder = connection_name(connection, target["selected_by_user_id"])
+        return circle, None, f"That task is already selected by {holder}."
+    return circle, target, ""
+
+
+def select_circle_task(connection: sqlite3.Connection, circle_id: int,
+                       user_id: int, request_id: int) -> tuple[bool, str]:
+    """Spec 13/14/71: first-come-first-served selection with instant reservation."""
+    circle, target, error = _selection_checks(connection, circle_id, user_id, request_id)
+    if error:
+        return False, error
+    me = member_row(connection, circle_id, user_id)
+    if me["selected_request_id"]:
+        return False, "You already selected a task — choose “Change my task” to pick another."
+    connection.execute(
+        """UPDATE chain_members SET selected_request_id=?, selected_at=?, status=?,
+               response='accepted' WHERE proposal_id=? AND user_id=?""",
+        (request_id, now(), MEMBER_SELECTED, circle_id, user_id))
+    connection.execute(
+        """UPDATE requests SET reservation_status=?, selected_by_user_id=?,
+               was_ever_reserved=1 WHERE id=?""",
+        (RESERVATION_CIRCLE, user_id, request_id))
+    invalidate_start_proposal(connection, circle_id)
+    notify(connection, target["requester_id"],
+           f"{connection_name(connection, user_id)} selected your task inside Circle #{circle_id}.",
+           f"/chains/{circle_id}", kind="action")
+    return True, "Task selected."
+
+
+def deselect_circle_task(connection: sqlite3.Connection, circle_id: int,
+                         user_id: int) -> tuple[bool, str]:
+    """Spec 18: the task stays Circle-exclusive, it just becomes selectable again."""
+    circle = circle_row(connection, circle_id)
+    if not circle or circle["status"] not in ("pending", "start_confirming"):
+        return False, "This Circle is no longer open for selection."
+    me = member_row(connection, circle_id, user_id)
+    if not me or not me["selected_request_id"]:
+        return False, "You have not selected a task."
+    connection.execute(
+        "UPDATE requests SET selected_by_user_id=NULL WHERE id=?", (me["selected_request_id"],))
+    connection.execute(
+        """UPDATE chain_members SET selected_request_id=NULL, selected_at=NULL, status=?
+           WHERE proposal_id=? AND user_id=?""",
+        (MEMBER_PENDING, circle_id, user_id))
+    invalidate_start_proposal(connection, circle_id)
+    return True, "Task deselected."
+
+
+def switch_circle_task(connection: sqlite3.Connection, circle_id: int, user_id: int,
+                       request_id: int) -> tuple[bool, str]:
+    """Spec 18/72: atomic release-then-claim; the old task stays Circle-reserved."""
+    circle, target, error = _selection_checks(connection, circle_id, user_id, request_id)
+    if error:
+        return False, error
+    me = member_row(connection, circle_id, user_id)
+    if me["selected_request_id"] == request_id:
+        return True, "That is already your task."
+    if me["selected_request_id"]:
+        connection.execute(
+            "UPDATE requests SET selected_by_user_id=NULL WHERE id=?",
+            (me["selected_request_id"],))
+    connection.execute(
+        """UPDATE chain_members SET selected_request_id=?, selected_at=?, status=?,
+               response='accepted' WHERE proposal_id=? AND user_id=?""",
+        (request_id, now(), MEMBER_SELECTED, circle_id, user_id))
+    connection.execute(
+        """UPDATE requests SET reservation_status=?, selected_by_user_id=?,
+               was_ever_reserved=1 WHERE id=?""",
+        (RESERVATION_CIRCLE, user_id, request_id))
+    invalidate_start_proposal(connection, circle_id)
+    return True, "Task switched."
+
+
+def propose_start(connection: sqlite3.Connection, circle_id: int,
+                  proposer_id: int) -> tuple[bool, str]:
+    """Spec 23/24/69: freeze the exact mapping and ask the loop to confirm."""
+    circle = circle_row(connection, circle_id)
+    if not circle or circle["status"] not in ("pending", "start_confirming"):
+        return False, "This Circle cannot be started right now."
+    cycles = viable_cycles(connection, circle_id)
+    cycle = next((c for c in cycles if proposer_id in c), None)
+    if not cycle:
+        return False, "No complete Circle is currently available."
+    mapping = cycle_mapping(connection, circle_id, cycle)
+    if not mapping:
+        return False, "No complete Circle is currently available."
+    connection.execute(
+        "UPDATE circle_start_proposals SET status='cancelled' WHERE circle_id=? AND status='proposed'",
+        (circle_id,))
+    connection.execute(
+        "UPDATE chain_members SET start_confirmed=0 WHERE proposal_id=?", (circle_id,))
+    connection.execute(
+        """INSERT INTO circle_start_proposals(circle_id,proposed_by,status,created_at,
+               mapping_snapshot,included_member_ids)
+           VALUES (?,?,'proposed',?,?,?)""",
+        (circle_id, proposer_id, now(), json.dumps(mapping), json.dumps(cycle)))
+    connection.execute(
+        "UPDATE chain_proposals SET status='start_confirming' WHERE id=?", (circle_id,))
+    connection.execute(
+        """UPDATE chain_members SET start_confirmed=1, status=?
+           WHERE proposal_id=? AND user_id=?""", (MEMBER_START_CONFIRMING, circle_id, proposer_id))
+    for member_id in cycle:
+        if member_id != proposer_id:
+            notify(connection, member_id,
+                   f"{connection_name(connection, proposer_id)} proposed starting this Circle. "
+                   "Please confirm your commitment.",
+                   f"/chains/{circle_id}", kind="action")
+    return True, "Start proposed."
+
+
+def snapshot_matches(connection: sqlite3.Connection, proposal: sqlite3.Row) -> bool:
+    """Spec 26/69: a stale snapshot is never allowed to activate."""
+    mapping = json.loads(proposal["mapping_snapshot"])
+    current = circle_adjacency(connection, proposal["circle_id"])
+    for item in mapping:
+        if current.get(item["provider"]) != item["recipient"]:
+            return False
+        row = connection.execute(
+            "SELECT status, reservation_status FROM requests WHERE id=?",
+            (item["request_id"],)).fetchone()
+        if not row or row["status"] != "open" or row["reservation_status"] == RESERVATION_ACTIVE:
+            return False
+    return True
+
+
+def confirm_start(connection: sqlite3.Connection, circle_id: int,
+                  user_id: int) -> tuple[bool, str]:
+    """Spec 25/69: every included member must confirm the frozen mapping."""
+    proposal = connection.execute(
+        """SELECT * FROM circle_start_proposals WHERE circle_id=? AND status='proposed'
+           ORDER BY id DESC LIMIT 1""", (circle_id,)).fetchone()
+    if not proposal:
+        return False, "There is no start proposal to confirm."
+    included = json.loads(proposal["included_member_ids"])
+    if user_id not in included:
+        return False, "You are not part of this proposed Circle."
+    if not snapshot_matches(connection, proposal):
+        invalidate_start_proposal(connection, circle_id)
+        return False, "Assignments changed, so the start proposal was cancelled."
+    connection.execute(
+        "UPDATE chain_members SET start_confirmed=1, status=? WHERE proposal_id=? AND user_id=?",
+        (MEMBER_START_CONFIRMING, circle_id, user_id))
+    confirmed = {row["user_id"] for row in connection.execute(
+        """SELECT user_id FROM chain_members WHERE proposal_id=? AND start_confirmed=1
+           AND user_id IN (%s)""" % ",".join("?" for _ in included),
+        (circle_id, *included))}
+    if confirmed >= set(included):
+        return activate_circle(connection, proposal)
+    return True, "Commitment confirmed."
+
+
+def activate_circle(connection: sqlite3.Connection, proposal: sqlite3.Row) -> tuple[bool, str]:
+    """Spec 27/28/70: lock the loop, release everyone who was left out."""
+    circle_id = proposal["circle_id"]
+    mapping = json.loads(proposal["mapping_snapshot"])
+    included = json.loads(proposal["included_member_ids"])
+    deadline = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds")
+    for item in mapping:
+        row = connection.execute(
+            "SELECT status, reservation_status FROM requests WHERE id=?",
+            (item["request_id"],)).fetchone()
+        if not row or row["status"] != "open" or row["reservation_status"] == RESERVATION_ACTIVE:
+            return False, "A task in this Circle is no longer available."
+    # 1. Release everyone who is not part of the starting loop (spec 28).
+    for member in circle_member_rows(connection, circle_id):
+        if member["user_id"] in included:
+            continue
+        if member["selected_request_id"]:
+            connection.execute(
+                "UPDATE requests SET selected_by_user_id=NULL WHERE id=?",
+                (member["selected_request_id"],))
+        connection.execute(
+            """UPDATE chain_members SET status=?, removed_at=?, removal_reason=?,
+                   selected_request_id=NULL WHERE proposal_id=? AND user_id=?""",
+            (MEMBER_REMOVED, now(), "excluded_by_start_subset", circle_id, member["user_id"]))
+        connection.execute(
+            """UPDATE requests SET reservation_status=?, selected_by_user_id=NULL,
+                   circle_id=NULL WHERE id=? AND reservation_status IN (?,?)""",
+            (RESERVATION_RELEASED, member["request_id"], RESERVATION_PUBLIC, RESERVATION_CIRCLE))
+        notify(connection, member["user_id"],
+               "This Circle started without your pending assignment. Your task has returned "
+               "to the marketplace and may be matched into another Circle later.",
+               "/browse", kind="info")
+    # 2. Lock the loop.
+    connection.execute("DELETE FROM chain_tasks WHERE proposal_id=?", (circle_id,))
+    for item in mapping:
+        connection.execute(
+            """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value,
+                   status,original_task_value,deadline)
+               VALUES (?,?,?,?,0,'locked',?,?)""",
+            (circle_id, item["request_id"], item["recipient"], item["provider"],
+             item["value"], deadline))
+        connection.execute(
+            """UPDATE requests
+               SET provider_id=?, provider_value=0, provider_buffer=0, agreed_value=0,
+                   status='negotiating', circle_id=?, reservation_status=?,
+                   selected_by_user_id=?, negotiation_deadline=?
+               WHERE id=?""",
+            (item["provider"], circle_id, RESERVATION_ACTIVE, item["provider"],
+             deadline, item["request_id"]))
+    connection.execute(
+        """UPDATE chain_members SET status=?, response='accepted'
+           WHERE proposal_id=? AND user_id IN (%s)""" % ",".join("?" for _ in included),
+        (MEMBER_ACTIVE, circle_id, *included))
+    connection.execute(
+        "UPDATE circle_start_proposals SET status='activated' WHERE id=?", (proposal["id"],))
+    connection.execute(
+        "UPDATE chain_proposals SET status='active', activated_at=? WHERE id=?",
+        (now(), circle_id))
+    for item in mapping:
+        notify(connection, item["provider"],
+               "🎉 Your Circle is active. You are helping "
+               f"{connection_name(connection, item['recipient'])} — no credits move.",
+               f"/chains/{circle_id}", kind="success")
+    return True, "Circle activated."
+
+
+def dissolve_circle(connection: sqlite3.Connection, circle_id: int, reason: str) -> None:
+    """Spec 29/30/73: release every reservation and send the tasks back to the board."""
+    circle = circle_row(connection, circle_id)
+    if not circle or circle["status"] in ("active", "fully_settled", "broken_settled",
+                                          "operationally_complete"):
+        return
+    for member in circle_member_rows(connection, circle_id):
+        connection.execute(
+            """UPDATE requests SET reservation_status=?, selected_by_user_id=NULL,
+                   circle_id=NULL WHERE id=? AND reservation_status IN (?,?)""",
+            (RESERVATION_RELEASED, member["request_id"], RESERVATION_PUBLIC, RESERVATION_CIRCLE))
+        notify(connection, member["user_id"], reason, "/browse", kind="info")
+    connection.execute(
+        "UPDATE chain_proposals SET status='dissolved', cancelled_at=? WHERE id=?",
+        (now(), circle_id))
+
+
+def _deadline_passed(value: str | None) -> bool:
+    if not value:
+        return False
+    text = value.strip()
+    try:
+        if len(text) == 10:
+            moment = datetime.fromisoformat(text)
+        else:
+            moment = datetime.fromisoformat(text.replace(" ", "T"))
+    except ValueError:
+        return False
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment <= datetime.now(timezone.utc)
+
+
+def circle_original_value(connection: sqlite3.Connection, circle_id: int, request_id: int) -> float:
+    """Spec 40: the bonus base is the owner's original proposed value, not 0."""
+    row = connection.execute(
+        "SELECT original_task_value FROM chain_tasks WHERE proposal_id=? AND request_id=?",
+        (circle_id, request_id)).fetchone()
+    if row and row["original_task_value"]:
+        return float(row["original_task_value"])
+    row = connection.execute(
+        "SELECT requester_value FROM requests WHERE id=?", (request_id,)).fetchone()
+    return float(row["requester_value"] or 0) if row else 0.0
+
+
+def remove_task_from_circle(connection: sqlite3.Connection, circle_id: int, request_id: int,
+                            reason: str) -> None:
+    """Spec 16/30: a task leaves the Circle, its owner goes with it, and the
+    selection that owner had made is released back inside the Circle."""
+    circle = circle_row(connection, circle_id)
+    if not circle:
+        return
+    member = connection.execute(
+        "SELECT * FROM chain_members WHERE proposal_id=? AND request_id=?",
+        (circle_id, request_id)).fetchone()
+    if not member:
+        return
+    if member["selected_request_id"]:
+        connection.execute(
+            "UPDATE requests SET selected_by_user_id=NULL WHERE id=?",
+            (member["selected_request_id"],))
+    connection.execute(
+        """UPDATE chain_members SET status=?, removed_at=?, removal_reason=?,
+               selected_request_id=NULL, response='declined'
+           WHERE proposal_id=? AND user_id=?""",
+        (MEMBER_REMOVED, now(), reason, circle_id, member["user_id"]))
+    connection.execute(
+        """UPDATE requests SET reservation_status=?, selected_by_user_id=NULL,
+               circle_id=NULL WHERE id=? AND reservation_status IN (?,?)""",
+        (RESERVATION_RELEASED, request_id, RESERVATION_PUBLIC, RESERVATION_CIRCLE))
+    connection.execute("DELETE FROM chain_tasks WHERE proposal_id=? AND request_id=?",
+                       (circle_id, request_id))
+    invalidate_start_proposal(connection, circle_id)
+    notify(connection, member["user_id"],
+           "Your task was accepted normally, so it left this Circle.", "/browse", kind="info")
+    if len(circle_member_rows(connection, circle_id)) < CIRCLE_MIN_MEMBERS:
+        dissolve_circle(connection, circle_id,
+                        "This Circle no longer has enough neighbours to form a loop. "
+                        "Your task is available normally again.")
+
+
+def expire_circles(connection: sqlite3.Connection) -> None:
+    """Spec 73: 72-hour pending cap plus per-task deadline eviction."""
+    overdue = connection.execute(
+        """SELECT id FROM chain_proposals
+           WHERE status IN ('pending','start_confirming') AND expires_at <= ?""",
+        (now(),)).fetchall()
+    for row in overdue:
+        dissolve_circle(connection, row["id"],
+                        "This Circle did not form in time. Your task is available normally again.")
+    for circle in connection.execute(
+            """SELECT id FROM chain_proposals WHERE status IN ('pending','start_confirming')"""):
+        circle_id = circle["id"]
+        changed = False
+        for member in circle_member_rows(connection, circle_id):
+            task = connection.execute(
+                "SELECT id, needed_by, preferred_time, status FROM requests WHERE id=?",
+                (member["request_id"],)).fetchone()
+            if not task:
+                continue
+            expired = (task["status"] != "open"
+                       or _deadline_passed(task["needed_by"])
+                       or _deadline_passed(task["preferred_time"]))
+            if not expired:
+                continue
+            if member["selected_request_id"]:
+                connection.execute(
+                    "UPDATE requests SET selected_by_user_id=NULL WHERE id=?",
+                    (member["selected_request_id"],))
+            connection.execute(
+                """UPDATE chain_members SET status=?, removed_at=?, removal_reason=?,
+                       selected_request_id=NULL WHERE proposal_id=? AND user_id=?""",
+                (MEMBER_REMOVED, now(), "task_expired", circle_id, member["user_id"]))
+            connection.execute(
+                """UPDATE requests SET reservation_status=?, selected_by_user_id=NULL,
+                       circle_id=NULL WHERE id=? AND reservation_status IN (?,?)""",
+                (RESERVATION_EXPIRED, member["request_id"],
+                 RESERVATION_PUBLIC, RESERVATION_CIRCLE))
+            notify(connection, member["user_id"],
+                   "Your task deadline passed, so it left this Circle and is back on the board.",
+                   "/browse", kind="warning")
+            changed = True
+        if changed:
+            invalidate_start_proposal(connection, circle_id)
+        if len(circle_member_rows(connection, circle_id)) < CIRCLE_MIN_MEMBERS:
+            dissolve_circle(connection, circle_id,
+                            "This Circle no longer has enough neighbours to form a loop. "
+                            "Your task is available normally again.")
+
+
 def circle_progress(connection: sqlite3.Connection, proposal_id: int) -> dict[str, int]:
     row = connection.execute(
         """SELECT COUNT(*) total,
@@ -225,84 +774,427 @@ def circle_progress(connection: sqlite3.Connection, proposal_id: int) -> dict[st
     return {"total": row["total"] or 0, "done": row["done"] or 0}
 
 
-def close_circle_if_complete(connection: sqlite3.Connection, proposal_id: int) -> None:
-    """Mark a Circle complete and celebrate when every linked task is done."""
-    if not proposal_id:
+def open_circle_disputes(connection: sqlite3.Connection, circle_id: int) -> int:
+    return connection.execute(
+        """SELECT COUNT(*) c FROM disputes d JOIN chain_tasks ct ON ct.request_id=d.request_id
+           WHERE ct.proposal_id=? AND d.status='open'""", (circle_id,)).fetchone()["c"]
+
+
+def update_circle_progress(connection: sqlite3.Connection, circle_id: int) -> None:
+    """Spec 38: operational completion, then full settlement once disputes clear."""
+    circle = circle_row(connection, circle_id)
+    if not circle or circle["status"] in ("dissolved", "broken_settled", "fully_settled"):
         return
-    proposal = connection.execute(
-        "SELECT * FROM chain_proposals WHERE id=?", (proposal_id,)).fetchone()
-    if not proposal or proposal["status"] != "active":
+    progress = circle_progress(connection, circle_id)
+    if not progress["total"]:
         return
-    progress = circle_progress(connection, proposal_id)
-    if not progress["total"] or progress["done"] < progress["total"]:
+    if (circle["status"] in ("active", "recovery")
+            and progress["done"] >= progress["total"]):
+        connection.execute(
+            """UPDATE chain_proposals SET status='operationally_complete',
+                   operationally_completed_at=? WHERE id=?""", (now(), circle_id))
+        circle = circle_row(connection, circle_id)
+        for member in circle_member_rows(connection, circle_id):
+            notify(connection, member["user_id"],
+                   f"🎉 Circle complete — {progress['total']} needs fulfilled · "
+                   f"{progress['total']} neighbours helped · 0 credits exchanged",
+                   f"/chains/{circle_id}", kind="success")
+    if circle["status"] != "operationally_complete":
+        return
+    if open_circle_disputes(connection, circle_id):
+        return
+    still_waiting = connection.execute(
+        """SELECT COUNT(*) c FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+           WHERE ct.proposal_id=? AND r.status='completed_pending_release'""",
+        (circle_id,)).fetchone()["c"]
+    if still_waiting:
         return
     connection.execute(
-        "UPDATE chain_proposals SET status='completed', cancelled_at=NULL WHERE id=?",
-        (proposal_id,),
-    )
-    members = connection.execute(
-        "SELECT user_id FROM chain_members WHERE proposal_id=? AND response='accepted'",
-        (proposal_id,)).fetchall()
-    summary = (f"{progress['total']} needs fulfilled · {progress['total']} neighbours helped "
-               f"· 0 credits exchanged")
-    for member in members:
+        "UPDATE chain_proposals SET status='fully_settled', fully_settled_at=? WHERE id=?",
+        (now(), circle_id))
+    release_circle_bonuses(connection, circle_id)
+    for member in circle_member_rows(connection, circle_id):
         notify(connection, member["user_id"],
-               f"Circle complete — {summary}", f"/chains/{proposal_id}", kind="success")
-        apply_reliability_event(
-            connection, member["user_id"], "circle_completed", 1,
-            "You completed your Circle commitment", None)
+               f"Circle #{circle_id} is fully settled.", f"/chains/{circle_id}", kind="success")
 
 
-def assign_circle_tasks(connection: sqlite3.Connection, proposal_id: int) -> list[dict[str, Any]]:
-    """Pair each accepted member with a task they are willing to do.
-
-    Preference order: members with the fewest willing helpers get matched first,
-    and nobody is ever assigned their own task. Falls back to the natural
-    rotation when nobody has picked preferences yet.
-    """
-    members = connection.execute(
-        """SELECT cm.user_id, cm.request_id FROM chain_members cm
-           WHERE cm.proposal_id=? AND cm.response='accepted' ORDER BY cm.position""",
-        (proposal_id,),
-    ).fetchall()
-    if len(members) < 2:
-        return []
-    own: dict[int, int] = {m["user_id"]: m["request_id"] for m in members}
-    chosen: dict[int, list[int]] = {
-        m["user_id"]: [
-            row["request_id"] for row in connection.execute(
-                "SELECT request_id FROM chain_interest WHERE proposal_id=? AND user_id=?",
-                (proposal_id, m["user_id"]))
-        ]
-        for m in members
-    }
-    order = [m["user_id"] for m in members]
-    remaining = list(order)
-    remaining.sort(key=lambda uid: len([r for r in chosen.get(uid, []) if r != own[uid]]))
-    taken: set[int] = set()
-    assignment: list[dict[str, Any]] = []
-    for helper in remaining:
-        options = [r for r in chosen.get(helper, []) if r != own[helper] and r not in taken]
-        if not options:
-            options = [m["request_id"] for m in members
-                       if m["request_id"] != own[helper] and m["request_id"] not in taken]
-        if not options:
-            continue
-        task_id = options[0]
-        taken.add(task_id)
-        owner = next(m["user_id"] for m in members if m["request_id"] == task_id)
-        value = connection.execute(
-            "SELECT requester_value FROM requests WHERE id=?", (task_id,)).fetchone()["requester_value"] or 0
-        assignment.append({"request_id": task_id, "helper_id": helper,
-                           "requester_id": owner, "value": value})
-    connection.execute("DELETE FROM chain_tasks WHERE proposal_id=?", (proposal_id,))
-    for row in assignment:
+def release_circle_bonuses(connection: sqlite3.Connection, circle_id: int) -> None:
+    """Spec 40: the thumbs-up bonus is only issued once the Circle is fully settled."""
+    for bonus in connection.execute(
+            """SELECT * FROM circle_bonuses WHERE circle_id=? AND status='pending'""",
+            (circle_id,)):
         connection.execute(
-            """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value)
-               VALUES (?,?,?,?,?)""",
-            (proposal_id, row["request_id"], row["requester_id"], row["helper_id"], row["value"]),
-        )
-    return assignment
+            "UPDATE users SET balance=balance+? WHERE id=?",
+            (bonus["amount"], bonus["provider_id"]))
+        ledger_entry(connection, bonus["provider_id"], bonus["request_id"],
+                     "circle_appreciation_bonus", bonus["amount"],
+                     f"Circle appreciation bonus +{bonus['amount']:.1f}")
+        connection.execute(
+            "UPDATE circle_bonuses SET status='issued', issued_at=? WHERE id=?",
+            (now(), bonus["id"]))
+        notify(connection, bonus["provider_id"],
+               f"Circle appreciation bonus +{bonus['amount']:.1f} credits.",
+               f"/requests/{bonus['request_id']}", kind="success")
+
+
+def close_circle_if_complete(connection: sqlite3.Connection, proposal_id: int) -> None:
+    update_circle_progress(connection, proposal_id)
+
+
+def request_circle_withdrawal(connection: sqlite3.Connection, circle_id: int, user_id: int,
+                              reason: str) -> tuple[int | None, str]:
+    """Spec 44/47/74: no simple leave button — open a recovery case instead."""
+    circle = circle_row(connection, circle_id)
+    if not circle or circle["status"] not in ("active", "recovery"):
+        return None, "This Circle is not active."
+    me = member_row(connection, circle_id, user_id)
+    if not me:
+        return None, "You are not part of this Circle."
+    owners = task_owner_map(connection, circle_id)
+    owned_by_user = {uid: rid for rid, uid in owners.items()}
+    # Predecessor helps the leaver; successor is the person the leaver was helping.
+    predecessor = None
+    for row in connection.execute(
+            """SELECT helper_id, request_id FROM chain_tasks WHERE proposal_id=?""",
+            (circle_id,)):
+        if row["request_id"] == owned_by_user.get(user_id):
+            predecessor = row["helper_id"]
+    successor = None
+    for row in connection.execute(
+            """SELECT request_id, requester_id FROM chain_tasks WHERE proposal_id=?
+               AND helper_id=?""", (circle_id, user_id)):
+        successor = row["requester_id"]
+    own_task = connection.execute(
+        "SELECT status FROM requests WHERE id=?", (owned_by_user.get(user_id, 0),)).fetchone()
+    given_task = connection.execute(
+        """SELECT r.status FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+           WHERE ct.proposal_id=? AND ct.helper_id=?""", (circle_id, user_id)).fetchone()
+    received = bool(own_task and own_task["status"] in ("completed", "resolved"))
+    completed_help = bool(given_task and given_task["status"] in ("completed", "resolved"))
+    cursor = connection.execute(
+        """INSERT INTO circle_recovery_cases(circle_id,leaving_user_id,predecessor_user_id,
+               successor_user_id,leaver_received_help,leaver_completed_help,reason,status,
+               created_at)
+           VALUES (?,?,?,?,?,?,?,'open',?)""",
+        (circle_id, user_id, predecessor, successor, int(received), int(completed_help),
+         (reason or "").strip()[:400], now()))
+    case_id = cursor.lastrowid
+    connection.execute(
+        "UPDATE chain_members SET status=? WHERE proposal_id=? AND user_id=?",
+        (MEMBER_WITHDRAWAL_REQUESTED, circle_id, user_id))
+    connection.execute(
+        "UPDATE chain_proposals SET status='recovery' WHERE id=?", (circle_id,))
+    for target in {predecessor, successor}:
+        if target:
+            notify(connection, target,
+                   f"{connection_name(connection, user_id)} cannot complete their Circle "
+                   "commitment. Review the recovery options.",
+                   f"/chains/{circle_id}/recovery/{case_id}", kind="warning")
+    return case_id, "Withdrawal requested."
+
+
+def apply_reliability_penalty_for_withdrawal(connection: sqlite3.Connection,
+                                             case: sqlite3.Row) -> None:
+    """Spec 45: -5 before receiving help, -10 after."""
+    change = (CIRCLE_WITHDRAW_AFTER_HELP if case["leaver_received_help"]
+              else CIRCLE_WITHDRAW_BEFORE_HELP)
+    apply_reliability_event(connection, case["leaving_user_id"], "broken_circle_commitment",
+                            change, "Withdrew from an active Circle", None)
+    connection.execute(
+        "UPDATE circle_recovery_cases SET reliability_penalty=? WHERE id=?",
+        (change, case["id"]))
+
+
+def apply_circle_breach_penalty(connection: sqlite3.Connection, case: sqlite3.Row) -> int:
+    """Spec 52-54: penalty = leaver's own task value, split 50/50, may breach the floor."""
+    owners = task_owner_map(connection, case["circle_id"])
+    owned = next((rid for rid, uid in owners.items() if uid == case["leaving_user_id"]), None)
+    if not owned:
+        return 0
+    value = connection.execute(
+        "SELECT requester_value FROM requests WHERE id=?", (owned,)).fetchone()
+    penalty = int(value["requester_value"] or 0) if value else 0
+    if penalty <= 0:
+        return 0
+    predecessor = case["predecessor_user_id"]
+    successor = case["successor_user_id"]
+    shares: dict[int, float] = {}
+    if predecessor and successor and predecessor != successor:
+        shares = {predecessor: penalty / 2, successor: penalty / 2}
+    elif predecessor or successor:
+        shares = {(predecessor or successor): float(penalty)}
+    else:
+        shares = {}
+    connection.execute(
+        "UPDATE users SET balance=balance-? WHERE id=?", (penalty, case["leaving_user_id"]))
+    ledger_entry(connection, case["leaving_user_id"], owned, "circle_breach_penalty", -penalty,
+                 f"Circle breach penalty for Circle #{case['circle_id']}")
+    for user_id, share in shares.items():
+        connection.execute(
+            "UPDATE users SET balance=balance+? WHERE id=?", (share, user_id))
+        ledger_entry(connection, user_id, owned, "circle_breach_compensation", share,
+                     f"Compensation for a Circle breach in Circle #{case['circle_id']}")
+        notify(connection, user_id,
+               f"+{share:.1f} credits compensation for the Circle #{case['circle_id']} breach.",
+               f"/chains/{case['circle_id']}", kind="warning")
+    connection.execute(
+        "UPDATE circle_recovery_cases SET credit_penalty=? WHERE id=?", (penalty, case["id"]))
+    notify(connection, case["leaving_user_id"],
+           f"A Circle breach penalty of {penalty} credits was applied. Your balance may now be "
+           "below the normal spending floor until you rebalance it.",
+           "/history", kind="warning")
+    return penalty
+
+
+def break_circle(connection: sqlite3.Connection, circle_id: int, note: str) -> None:
+    """Spec 57: stop recovery, honour delivered work, settle the rest."""
+    circle = circle_row(connection, circle_id)
+    if not circle:
+        return
+    for row in connection.execute(
+            """SELECT ct.*, r.status FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+               WHERE ct.proposal_id=?""", (circle_id,)):
+        if row["status"] not in ("completed", "resolved"):
+            connection.execute(
+                """UPDATE requests SET provider_id=NULL, circle_id=NULL, status='open',
+                       reservation_status=?, confirm_requester=0,
+                       confirm_provider=0, negotiation_deadline=NULL WHERE id=?""",
+                (RESERVATION_RELEASED, row["request_id"]))
+            notify(connection, row["requester_id"],
+                   "This Circle broke, so your task is back on the board.", "/browse",
+                   kind="warning")
+        connection.execute(
+            "UPDATE chain_tasks SET status='cancelled' WHERE proposal_id=? AND request_id=?",
+            (circle_id, row["request_id"]))
+    connection.execute(
+        """UPDATE chain_proposals SET status='broken_settled', cancelled_at=? WHERE id=?""",
+        (now(), circle_id))
+    for member in circle_member_rows(connection, circle_id):
+        notify(connection, member["user_id"],
+               f"This Circle was broken. {note} Completed work stays recorded and open "
+               "disputes remain resolvable.", f"/chains/{circle_id}", kind="warning")
+
+
+def settle_recovery_with_credits(connection: sqlite3.Connection, case: sqlite3.Row) -> None:
+    """Spec 50/75: the predecessor pays the successor's original proposed value."""
+    successor = case["successor_user_id"]
+    predecessor = case["predecessor_user_id"]
+    if not successor or not predecessor:
+        return
+    owners = task_owner_map(connection, case["circle_id"])
+    owned = next((rid for rid, uid in owners.items() if uid == successor), None)
+    if not owned:
+        return
+    value = connection.execute(
+        "SELECT requester_value FROM requests WHERE id=?", (owned,)).fetchone()
+    amount = int(value["requester_value"] or 0) if value else 0
+    if amount <= 0:
+        return
+    connection.execute(
+        "UPDATE users SET balance=balance-? WHERE id=?", (amount, predecessor))
+    connection.execute(
+        "UPDATE users SET balance=balance+? WHERE id=?", (amount, successor))
+    ledger_entry(connection, predecessor, owned, "circle_recovery_settlement", -amount,
+                 f"Credit settlement for Circle #{case['circle_id']} recovery")
+    ledger_entry(connection, successor, owned, "circle_recovery_settlement", amount,
+                 f"Credit settlement for Circle #{case['circle_id']} recovery")
+    notify(connection, successor,
+           f"{connection_name(connection, predecessor)} settled {amount} credits so your "
+           "Circle contribution is not lost.", f"/chains/{case['circle_id']}", kind="warning")
+    connection.execute(
+        "UPDATE circle_recovery_cases SET recovery_choice='credit_settlement' WHERE id=?",
+        (case["id"],))
+
+
+def redistribute_within_circle(connection: sqlite3.Connection, case: sqlite3.Row) -> bool:
+    """Spec 49/75: bypass the leaver — predecessor takes over the successor's task."""
+    predecessor = case["predecessor_user_id"]
+    successor = case["successor_user_id"]
+    if not predecessor or not successor or predecessor == successor:
+        return False
+    owners = task_owner_map(connection, case["circle_id"])
+    owned_by_user = {uid: rid for rid, uid in owners.items()}
+    successor_task = owned_by_user.get(successor)
+    leaver_task = owned_by_user.get(case["leaving_user_id"])
+    if not successor_task or not leaver_task:
+        return False
+    deadline = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds")
+    value_row = connection.execute(
+        "SELECT requester_value FROM requests WHERE id=?", (successor_task,)).fetchone()
+    value = int(value_row["requester_value"] or 0) if value_row else 0
+    # The leaver's own task goes back on the board — nobody is helping it any more.
+    connection.execute(
+        "DELETE FROM chain_tasks WHERE proposal_id=? AND request_id=?",
+        (case["circle_id"], leaver_task))
+    connection.execute(
+        """UPDATE requests SET provider_id=NULL, circle_id=NULL, status='open',
+               reservation_status=?, selected_by_user_id=NULL, confirm_requester=0,
+               confirm_provider=0, negotiation_deadline=NULL WHERE id=?""",
+        (RESERVATION_RELEASED, leaver_task))
+    notify(connection, case["leaving_user_id"],
+           "Your task is back on the board after your Circle withdrawal.", "/browse",
+           kind="warning")
+    # The predecessor takes over the successor's task so the loop still closes.
+    connection.execute(
+        "DELETE FROM chain_tasks WHERE proposal_id=? AND request_id=?",
+        (case["circle_id"], successor_task))
+    connection.execute(
+        """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value,
+               status,original_task_value,deadline)
+           VALUES (?,?,?,?,0,'locked',?,?)""",
+        (case["circle_id"], successor_task, successor, predecessor, value, deadline))
+    connection.execute(
+        """UPDATE requests SET provider_id=?, provider_value=0, provider_buffer=0,
+               agreed_value=0, status='negotiating', circle_id=?, reservation_status=?,
+               negotiation_deadline=? WHERE id=?""",
+        (predecessor, case["circle_id"], RESERVATION_ACTIVE, deadline, successor_task))
+    connection.execute(
+        """UPDATE chain_members SET status=?, removed_at=?, removal_reason=?,
+               selected_request_id=NULL WHERE proposal_id=? AND user_id=?""",
+        (MEMBER_REMOVED, now(), "withdrew_from_active_circle", case["circle_id"],
+         case["leaving_user_id"]))
+    connection.execute(
+        "UPDATE circle_recovery_cases SET recovery_choice='redistribute', status='resolved', "
+        "resolved_at=? WHERE id=?", (now(), case["id"]))
+    connection.execute(
+        "UPDATE chain_proposals SET status='active' WHERE id=?", (case["circle_id"],))
+    notify(connection, predecessor,
+           f"You are now helping {connection_name(connection, successor)} directly so the "
+           "Circle can still close.", f"/chains/{case['circle_id']}", kind="action")
+    return True
+CIRCLE_STATUS_LABELS = {
+    "pending": "Possible Circle",
+    "start_confirming": "Start confirming",
+    "active": "Circle Active",
+    "recovery": "Recovery",
+    "operationally_complete": "Circle Complete",
+    "fully_settled": "Fully Settled",
+    "dissolved": "Dissolved",
+    "breaking": "Breaking",
+    "broken_settled": "Broken — Settled",
+}
+
+
+def find_replacement_options(connection: sqlite3.Connection, circle_id: int,
+                             case: sqlite3.Row) -> list[sqlite3.Row]:
+    """Spec 48: an eligible outsider whose own task can take the leaver's slot."""
+    members = circle_member_rows(connection, circle_id)
+    member_ids = {m["user_id"] for m in members}
+    values = [t["requester_value"] or 0 for t in circle_task_rows(connection, circle_id)]
+    if not values:
+        return []
+    low, high = min(values), max(values)
+    district = ""
+    for member in members:
+        row = connection.execute("SELECT district FROM users WHERE id=?",
+                                 (member["user_id"],)).fetchone()
+        if row and row["district"]:
+            district = row["district"]
+            break
+    options = []
+    for task in connection.execute(
+            """SELECT r.*, u.name owner_name, u.reliability FROM requests r
+               JOIN users u ON u.id=r.requester_id
+               WHERE r.status='open' AND r.provider_id IS NULL
+                 AND COALESCE(r.reservation_status,'public')='public'
+                 AND COALESCE(r.urgency,'normal') != 'urgent'
+                 AND u.circle_enabled=1
+                 AND COALESCE(u.account_status,'active') != 'suspended'
+                 AND COALESCE(u.reliability,60) >= 40
+               ORDER BY r.requester_value, r.id"""):
+        owner = task["requester_id"]
+        if owner in member_ids:
+            continue
+        if low - CIRCLE_VALUE_TOLERANCE <= (task["requester_value"] or 0) <= high + CIRCLE_VALUE_TOLERANCE:
+            pass
+        else:
+            continue
+        if any(is_blocked(connection, owner, m["user_id"]) for m in members):
+            continue
+        options.append(task)
+    return options[:8]
+
+
+def apply_replacement(connection: sqlite3.Connection, case: sqlite3.Row,
+                      replacement_user_id: int | None) -> tuple[bool, str]:
+    """Spec 48: the replacement brings their own task in and takes the leaver's edge."""
+    circle_id = case["circle_id"]
+    predecessor = case["predecessor_user_id"]
+    successor = case["successor_user_id"]
+    if not replacement_user_id or not predecessor or not successor:
+        return False, "A replacement needs both a predecessor and a successor."
+    replacement_task = connection.execute(
+        """SELECT id, requester_id, requester_value FROM requests
+           WHERE status='open' AND provider_id IS NULL AND requester_id=?
+             AND COALESCE(reservation_status,'public')='public' ORDER BY id LIMIT 1""",
+        (replacement_user_id,)).fetchone()
+    if not replacement_task:
+        return False, "That neighbour has no eligible open task."
+    if member_row(connection, circle_id, replacement_user_id):
+        return False, "That neighbour is already in this Circle."
+    owners = task_owner_map(connection, circle_id)
+    owned_by_user = {uid: rid for rid, uid in owners.items()}
+    leaver_task = owned_by_user.get(case["leaving_user_id"])
+    successor_task = owned_by_user.get(successor)
+    if not leaver_task or not successor_task:
+        return False, "This Circle can no longer be remapped."
+    deadline = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds")
+    # The leaver's own task goes back to the board; the replacement's task enters.
+    connection.execute("DELETE FROM chain_tasks WHERE proposal_id=? AND request_id=?",
+                       (circle_id, leaver_task))
+    connection.execute(
+        """UPDATE requests SET provider_id=NULL, circle_id=NULL, status='open',
+               reservation_status=?, selected_by_user_id=NULL, confirm_requester=0,
+               confirm_provider=0, negotiation_deadline=NULL WHERE id=?""",
+        (RESERVATION_RELEASED, leaver_task))
+    connection.execute(
+        """UPDATE chain_members SET status=?, removed_at=?, removal_reason=?,
+               selected_request_id=NULL WHERE proposal_id=? AND user_id=?""",
+        (MEMBER_REMOVED, now(), "withdrew_from_active_circle", circle_id,
+         case["leaving_user_id"]))
+    max_position = connection.execute(
+        "SELECT COALESCE(MAX(position),0) p FROM chain_members WHERE proposal_id=?",
+        (circle_id,)).fetchone()["p"]
+    connection.execute(
+        """INSERT OR IGNORE INTO chain_members(proposal_id,user_id,request_id,position,
+               status,response) VALUES (?,?,?,?,'active','accepted')""",
+        (circle_id, replacement_user_id, replacement_task["id"], max_position + 1))
+    # P now helps R, and R helps S.
+    for request_id, recipient, helper in (
+            (replacement_task["id"], replacement_user_id, predecessor),
+            (successor_task, successor, replacement_user_id),
+    ):
+        value_row = connection.execute(
+            "SELECT requester_value FROM requests WHERE id=?", (request_id,)).fetchone()
+        value = int(value_row["requester_value"] or 0) if value_row else 0
+        connection.execute("DELETE FROM chain_tasks WHERE proposal_id=? AND request_id=?",
+                           (circle_id, request_id))
+        connection.execute(
+            """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value,
+                   status,original_task_value,deadline)
+               VALUES (?,?,?,?,0,'locked',?,?)""",
+            (circle_id, request_id, recipient, helper, value, deadline))
+        connection.execute(
+            """UPDATE requests SET provider_id=?, provider_value=0, provider_buffer=0,
+                   agreed_value=0, status='negotiating', circle_id=?, reservation_status=?,
+                   negotiation_deadline=? WHERE id=?""",
+            (helper, circle_id, RESERVATION_ACTIVE, deadline, request_id))
+    connection.execute(
+        "UPDATE chain_proposals SET status='active' WHERE id=?", (circle_id,))
+    connection.execute(
+        "UPDATE circle_recovery_cases SET recovery_choice='replacement', "
+        "replacement_user_id=?, status='resolved', resolved_at=? WHERE id=?",
+        (replacement_user_id, now(), case["id"]))
+    apply_reliability_penalty_for_withdrawal(connection, case)
+    if case["leaver_received_help"] and not case["leaver_completed_help"]:
+        apply_circle_breach_penalty(connection, case)
+    for target in (predecessor, successor, replacement_user_id):
+        notify(connection, target,
+               f"{connection_name(connection, replacement_user_id)} has joined the Circle so "
+               "the loop can still close.", f"/chains/{circle_id}", kind="action")
+    return True, "A replacement joined and the loop was restored."
+
+
 TASK_CATEGORIES = (
     "daily life",
     "education",
@@ -548,6 +1440,33 @@ def init_db() -> None:
                 sender_id INTEGER, body TEXT NOT NULL, created_at TEXT NOT NULL,
                 FOREIGN KEY(proposal_id) REFERENCES chain_proposals(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS circle_start_proposals (
+                id INTEGER PRIMARY KEY, circle_id INTEGER NOT NULL,
+                proposed_by INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'proposed',
+                created_at TEXT NOT NULL, mapping_snapshot TEXT NOT NULL,
+                included_member_ids TEXT NOT NULL,
+                FOREIGN KEY(circle_id) REFERENCES chain_proposals(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS circle_bonuses (
+                id INTEGER PRIMARY KEY, circle_id INTEGER NOT NULL, request_id INTEGER NOT NULL,
+                provider_id INTEGER NOT NULL, requester_id INTEGER NOT NULL,
+                amount REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL, issued_at TEXT,
+                UNIQUE(circle_id, request_id)
+            );
+            CREATE TABLE IF NOT EXISTS circle_recovery_cases (
+                id INTEGER PRIMARY KEY, circle_id INTEGER NOT NULL,
+                leaving_user_id INTEGER NOT NULL, predecessor_user_id INTEGER,
+                successor_user_id INTEGER,
+                leaver_received_help INTEGER NOT NULL DEFAULT 0,
+                leaver_completed_help INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '', recovery_choice TEXT,
+                replacement_user_id INTEGER, credit_penalty REAL NOT NULL DEFAULT 0,
+                reliability_penalty INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL,
+                resolved_at TEXT,
+                FOREIGN KEY(circle_id) REFERENCES chain_proposals(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS reliability_events (
                 id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, request_id INTEGER,
                 event_type TEXT NOT NULL, score_change INTEGER NOT NULL,
@@ -635,6 +1554,11 @@ def init_db() -> None:
             ("duration_minutes", "INTEGER NOT NULL DEFAULT 0"),
             ("community_id", "INTEGER"),
             ("visibility", "TEXT NOT NULL DEFAULT 'public'"),
+            # Spec 64: Circle task reservation state lives on the request so the
+            # public feed can hide it and the normal accept endpoint can refuse it.
+            ("reservation_status", "TEXT NOT NULL DEFAULT 'public'"),
+            ("selected_by_user_id", "INTEGER"),
+            ("was_ever_reserved", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in columns:
                 connection.execute(f"ALTER TABLE requests ADD COLUMN {column} {definition}")
@@ -704,7 +1628,57 @@ def init_db() -> None:
         )
         if not connection.execute("SELECT 1 FROM rewards LIMIT 1").fetchone():
             seed_rewards(connection)
-        notif_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notifications)")}
+        proposal_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(chain_proposals)")
+        }
+        for column, definition in (
+            ("max_members", "INTEGER NOT NULL DEFAULT 4"),
+            ("credit_tolerance", f"INTEGER NOT NULL DEFAULT {CIRCLE_VALUE_TOLERANCE}"),
+            ("operationally_completed_at", "TEXT"),
+            ("fully_settled_at", "TEXT"),
+            ("community_id", "TEXT"),
+        ):
+            if column not in proposal_columns:
+                connection.execute(
+                    f"ALTER TABLE chain_proposals ADD COLUMN {column} {definition}")
+        member_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(chain_members)")
+        }
+        for column, definition in (
+            ("status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("start_confirmed", "INTEGER NOT NULL DEFAULT 0"),
+            ("removed_at", "TEXT"),
+            ("removal_reason", "TEXT"),
+            ("selected_request_id", "INTEGER"),
+            ("selected_at", "TEXT"),
+        ):
+            if column not in member_columns:
+                connection.execute(
+                    f"ALTER TABLE chain_members ADD COLUMN {column} {definition}")
+        task_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(chain_tasks)")
+        }
+        for column, definition in (
+            ("status", "TEXT NOT NULL DEFAULT 'selected'"),
+            ("started_at", "TEXT"),
+            ("completed_at", "TEXT"),
+            ("confirmed_at", "TEXT"),
+            ("deadline", "TEXT"),
+            ("original_task_value", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column not in task_columns:
+                connection.execute(
+                    f"ALTER TABLE chain_tasks ADD COLUMN {column} {definition}")
+        for column, definition in (
+            # Spec 60: Circle preferences.
+            ("circle_notifications", "INTEGER NOT NULL DEFAULT 1"),
+            ("circle_community_only", "INTEGER NOT NULL DEFAULT 0"),
+            ("circle_max_distance_km", "REAL NOT NULL DEFAULT 2.0"),
+            ("circle_availability", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if column not in user_columns:
+                connection.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
+        notif_columns ={row["name"] for row in connection.execute("PRAGMA table_info(notifications)")}
         if "kind" not in notif_columns:
             connection.execute("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'info'")
         message_columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)")}
@@ -1026,76 +2000,95 @@ def notify(connection: sqlite3.Connection, user_id: int | None, body: str, link:
     )
 
 
-def detect_circular_matches(connection: sqlite3.Connection, max_size: int = 6) -> list[dict[str, Any]]:
-    """Group open tasks with similar values for voluntary task circulation."""
-    if max_size < 3:
-        return []
-    requests = connection.execute(
-        """SELECT r.*, u.name requester_name FROM requests r
-           JOIN users u ON u.id=r.requester_id
+def circle_eligible_requests(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Spec 5/6: only open, low-risk, non-urgent, Circle-enabled, nearby tasks.
+
+    One task per owner is taken here so a single Circle never carries two tasks
+    belonging to the same resident (restriction 1 in spec 4).
+    """
+    rows = connection.execute(
+        """SELECT r.*, u.name requester_name, u.reliability, u.account_status,
+                  u.circle_enabled, u.district
+           FROM requests r JOIN users u ON u.id=r.requester_id
            WHERE r.status='open' AND r.provider_id IS NULL
+             AND COALESCE(r.reservation_status,'public')='public'
+             AND COALESCE(r.urgency,'normal') != 'urgent'
+             AND u.circle_enabled=1 AND COALESCE(u.account_status,'active') != 'suspended'
+             AND COALESCE(u.reliability,60) >= 40
            ORDER BY r.requester_value, r.id""").fetchall()
+    # Spec 4 restriction 1: at most one task per owner in a Circle, so only the
+    # owner's cheapest open task is ever considered for candidate generation.
     by_user: dict[int, sqlite3.Row] = {}
-    for item in requests:
+    for item in rows:
         by_user.setdefault(item["requester_id"], item)
-    candidates = list(by_user.values())
+    return sorted(by_user.values(), key=lambda r: (r["requester_value"] or 0, r["id"]))
+
+
+def detect_circular_matches(connection: sqlite3.Connection,
+                            max_size: int = CIRCLE_MAX_MEMBERS) -> list[dict[str, Any]]:
+    """Spec 7-10: group 2-4 compatible tasks into one suggested Circle."""
+    if max_size < CIRCLE_MIN_MEMBERS:
+        return []
+    candidates = circle_eligible_requests(connection)
+    already = {
+        row["request_id"] for row in connection.execute(
+            """SELECT request_id FROM chain_members cm JOIN chain_proposals cp ON cp.id=cm.proposal_id
+               WHERE cp.status IN ('pending','start_confirming','active','recovery')""")
+    }
     blocked_pairs = {
         (row["blocker_id"], row["blocked_id"]) for row in connection.execute(
             "SELECT blocker_id, blocked_id FROM blocks")
     }
     blocked_pairs |= {(b, a) for a, b in blocked_pairs}
+    candidates = [item for item in candidates if item["id"] not in already]
     matches = []
-    seen: set[tuple[int, ...]] = set()
-    for start in range(len(candidates)):
-        for size in range(min(max_size, len(candidates) - start), 2, -1):
-            group = candidates[start:start + size]
-            users = [item["requester_id"] for item in group]
-            if any((a, b) in blocked_pairs for a in users for b in users if a != b):
+    seen: set[int] = set()
+    start = 0
+    while start < len(candidates):
+        group: list[sqlite3.Row] = []
+        index = start
+        while index < len(candidates) and len(group) < max_size:
+            item = candidates[index]
+            index += 1
+            if item["id"] in seen:
                 continue
-            values = [item["requester_value"] or 0 for item in group]
-            if max(values) - min(values) > CIRCLE_VALUE_TOLERANCE * 2:
+            # Spec 8: same neighbourhood.
+            if group and (item["district"] or "").strip().lower() != \
+                    (group[0]["district"] or "").strip().lower():
                 continue
-            request_ids = tuple(item["id"] for item in group)
-            if request_ids in seen:
+            if any((a, b) in blocked_pairs
+                   for a in [row["requester_id"] for row in group] + [item["requester_id"]]
+                   for b in [row["requester_id"] for row in group] + [item["requester_id"]]
+                   if a != b):
                 continue
-            seen.add(request_ids)
-            average = round(sum(values) / len(values))
+            values = [row["requester_value"] or 0 for row in group] + [item["requester_value"] or 0]
+            # Spec 7: max - min <= tolerance.
+            if max(values) - min(values) > CIRCLE_VALUE_TOLERANCE:
+                continue
+            group.append(item)
+        if len(group) >= CIRCLE_MIN_MEMBERS:
+            for item in group:
+                seen.add(item["id"])
+            values = [row["requester_value"] or 0 for row in group]
             matches.append({
-                "users": tuple(item["requester_id"] for item in group),
-                "requests": list(request_ids),
+                "users": tuple(row["requester_id"] for row in group),
+                "requests": [row["id"] for row in group],
                 "values": values,
-                "titles": [item["title"] for item in group],
+                "titles": [row["title"] for row in group],
                 "balancing_amount": max(values) - min(values),
                 "balance_explanation": (
-                    f"These {len(group)} open tasks are between {min(values)} and {max(values)} credits. "
-                    f"Everyone can choose one other task to complete; the average is {average} credits."
+                    f"These {len(group)} nearby needs are between {min(values)} and "
+                    f"{max(values)} credits. Pick one neighbour to help and someone picks "
+                    "yours — when the loop closes, no credits move."
                 ),
             })
-            break
+        start = index if index > start else start + 1
     return matches[:10]
 
 
-def expire_chain_proposals(connection: sqlite3.Connection) -> None:
-    expired = connection.execute(
-        """SELECT id FROM chain_proposals
-           WHERE status='pending' AND expires_at <= ?""", (now(),)).fetchall()
-    for proposal in expired:
-        connection.execute(
-            "UPDATE chain_proposals SET status='expired', cancelled_at=? WHERE id=?",
-            (now(), proposal["id"]),
-        )
-        members = connection.execute(
-            "SELECT user_id FROM chain_members WHERE proposal_id=?", (proposal["id"],)
-        ).fetchall()
-        for member in members:
-            notify(connection, member["user_id"],
-                   "A circular task-chain invitation expired.",
-                   f"/chains/{proposal['id']}", kind="info")
-
-
 def create_chain_proposal(connection: sqlite3.Connection, match: dict[str, Any],
-                          days: int = 3) -> int:
-    """Persist an invitation only; requests, escrow, and credits remain untouched."""
+                          hours: int = CIRCLE_PENDING_HOURS) -> int:
+    """Spec 10/11: persist a PENDING suggestion; nobody has committed to anything."""
     existing = connection.execute(
         """SELECT cp.id FROM chain_proposals cp
            JOIN chain_members cm ON cm.proposal_id=cp.id
@@ -1107,31 +2100,26 @@ def create_chain_proposal(connection: sqlite3.Connection, match: dict[str, Any],
     ).fetchone()
     if existing:
         return existing["id"]
-    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
+    expires = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(timespec="seconds")
     cursor = connection.execute(
-        """INSERT INTO chain_proposals(status,balancing_amount,balance_explanation,created_at,expires_at)
-           VALUES ('pending',?,?,?,?)""",
-        (match["balancing_amount"], match["balance_explanation"], now(), expires),
+        """INSERT INTO chain_proposals(status,balancing_amount,balance_explanation,created_at,
+               expires_at,max_members,credit_tolerance)
+           VALUES ('pending',?,?,?,?,?,?)""",
+        (match["balancing_amount"], match["balance_explanation"], now(), expires,
+         CIRCLE_MAX_MEMBERS, CIRCLE_VALUE_TOLERANCE),
     )
     proposal_id = cursor.lastrowid
     for position, user_id in enumerate(match["users"]):
         connection.execute(
-            """INSERT INTO chain_members(proposal_id,user_id,request_id,position)
-               VALUES (?,?,?,?)""",
+            """INSERT INTO chain_members(proposal_id,user_id,request_id,position,status)
+               VALUES (?,?,?,?,'pending')""",
             (proposal_id, user_id, match["requests"][position], position),
         )
-    # A helps B, B helps C, C helps A.
-    for position, request_id in enumerate(match["requests"]):
-        connection.execute(
-            """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value)
-               VALUES (?,?,?,?,?)""",
-            (proposal_id, request_id, match["users"][position],
-            match["users"][(position - 1) % len(match["users"])], match["values"][position]),
-        )
+    # Spec 11: tasks are associated but stay on the marketplace until someone
+    # inside the Circle actually selects one.
     for user_id in match["users"]:
         notify(connection, user_id,
-               "You have been invited to a circular task chain. Review all tasks before accepting.",
-               f"/chains/{proposal_id}", kind="action")
+               "🔄 A Circle may be forming near you.", f"/chains/{proposal_id}", kind="action")
     return proposal_id
 
 
@@ -1330,7 +2318,7 @@ def _release_worker() -> None:
                 release_due_payments(connection)
                 create_deadline_reminders(connection)
                 expire_negotiations(connection)
-                expire_chain_proposals(connection)
+                expire_circles(connection)
                 ensure_chain_invitations(connection)
                 advance_disputes(connection)
         except sqlite3.Error:
@@ -1377,11 +2365,14 @@ def create_deadline_reminders(connection: sqlite3.Connection) -> None:
 
 def load_board(connection: sqlite3.Connection):
     expire_negotiations(connection)
+    expire_circles(connection)
     requests = connection.execute(
         """SELECT r.*, u.name requester_name, p.name provider_name
            FROM requests r JOIN users u ON u.id=r.requester_id
            LEFT JOIN users p ON p.id=r.provider_id
            WHERE COALESCE(r.visibility, 'public') = 'public'
+             AND (COALESCE(r.reservation_status,'public') IN ('public','released')
+                  OR r.status != 'open')
            ORDER BY r.created_at DESC"""
     ).fetchall()
     recommendations = {
@@ -1535,7 +2526,13 @@ def release_due_payments(connection: sqlite3.Connection) -> None:
                 "UPDATE requests SET status='completed', settlement_value=0 WHERE id=?",
                 (item["id"],),
             )
-            close_circle_if_complete(connection, item["circle_id"])
+            connection.execute(
+                """UPDATE chain_tasks SET status='settled', confirmed_at=?
+                   WHERE proposal_id=? AND request_id=?""",
+                (now(), item["circle_id"], item["id"]))
+            # Spec 38: operational completion first, full settlement once every
+            # dispute window has closed.
+            update_circle_progress(connection, item["circle_id"])
             continue
         settle_exchange(
             connection,
@@ -1773,7 +2770,7 @@ def chain_invitations(request: Request):
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        expire_chain_proposals(connection)
+        expire_circles(connection)
         ensure_chain_invitations(connection)
         proposals = connection.execute(
             """SELECT cp.*, cm.response, COUNT(allm.user_id) member_count,
@@ -1816,251 +2813,325 @@ def chain_review(request: Request, proposal_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        rows = chain_for_user(connection, proposal_id, user["id"])
-        if not rows:
-            return render(request, "error.html", message="That chain invitation does not exist.")
+        expire_circles(connection)
+        circle = circle_row(connection, proposal_id)
+        if not circle:
+            return render(request, "error.html", message="That Circle does not exist.")
+        members = circle_member_rows(connection, proposal_id, include_removed=True)
+        if not any(m["user_id"] == user["id"] for m in members):
+            return render(request, "error.html", message="That Circle does not exist.")
+        me = member_row(connection, proposal_id, user["id"])
+        tasks = circle_task_rows(connection, proposal_id)
+        cycles = viable_cycles(connection, proposal_id)
+        my_cycle = next((c for c in cycles if user["id"] in c), None)
+        start_proposal = connection.execute(
+            """SELECT * FROM circle_start_proposals WHERE circle_id=? AND status='proposed'
+               ORDER BY id DESC LIMIT 1""", (proposal_id,)).fetchone()
+        assignments = connection.execute(
+            """SELECT ct.*, r.title, r.status request_status, r.needed_by, r.location,
+                      u.name requester_name, h.name helper_name
+               FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+               JOIN users u ON u.id=ct.requester_id JOIN users h ON h.id=ct.helper_id
+               WHERE ct.proposal_id=? ORDER BY ct.request_id""",
+            (proposal_id,)).fetchall()
+        recovery_case = connection.execute(
+            """SELECT * FROM circle_recovery_cases WHERE circle_id=? AND status='open'
+               ORDER BY id DESC LIMIT 1""", (proposal_id,)).fetchone()
+        history = connection.execute(
+            """SELECT * FROM circle_recovery_cases WHERE circle_id=? ORDER BY id DESC""",
+            (proposal_id,)).fetchall()
+        bonuses = connection.execute(
+            """SELECT cb.*, u.name provider_name FROM circle_bonuses cb
+               JOIN users u ON u.id=cb.provider_id WHERE cb.circle_id=?""",
+            (proposal_id,)).fetchall()
         messages = connection.execute(
             """SELECT cm.*, u.name sender_name FROM chain_messages cm
                LEFT JOIN users u ON u.id=cm.sender_id
                WHERE proposal_id=? ORDER BY cm.id""", (proposal_id,)).fetchall()
-        tasks = connection.execute(
-            """SELECT ct.*, r.title, r.requester_value, r.status request_status,
-                      u.name requester_name, h.name helper_name
-               FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
-               JOIN users u ON u.id=ct.requester_id
-               JOIN users h ON h.id=ct.helper_id
-               WHERE ct.proposal_id=? ORDER BY ct.request_id""",
-            (proposal_id,),
-        ).fetchall()
-        all_members = connection.execute(
-            """SELECT cm.user_id, cm.request_id, cm.response, cm.position, r.title,
-                      r.description, r.category, r.requester_value, u.name requester_name
-               FROM chain_members cm JOIN requests r ON r.id=cm.request_id
-               JOIN users u ON u.id=cm.user_id
-               WHERE cm.proposal_id=? ORDER BY cm.position""", (proposal_id,)).fetchall()
-        my_interests = {
-            row["request_id"] for row in connection.execute(
-                "SELECT request_id FROM chain_interest WHERE proposal_id=? AND user_id=?",
-                (proposal_id, user["id"]))
-        }
         progress = circle_progress(connection, proposal_id)
-    return render(request, "chain_review.html", page="circle", proposal=rows[0], members=rows,
-                  tasks=tasks, all_members=all_members, my_interests=my_interests,
-                  my_own_request=next((m["request_id"] for m in rows
-                                       if m["user_id"] == user["id"]), None),
-                  progress=progress,
-                  messages=messages, my_response=next(
-                      row["response"] for row in rows if row["user_id"] == user["id"]))
+        loop_names = []
+        if my_cycle:
+            mapping = cycle_mapping(connection, proposal_id, my_cycle)
+            loop_names = [
+                {"provider": connection_name(connection, item["provider"]),
+                 "recipient": connection_name(connection, item["recipient"])}
+                for item in mapping
+            ]
+        confirmed_in_cycle = len([
+            m for m in members if m["start_confirmed"] and my_cycle and m["user_id"] in my_cycle
+        ]) if my_cycle else 0
+        expires_in = ""
+        if circle["expires_at"] and circle["status"] in ("pending", "start_confirming"):
+            try:
+                left = datetime.fromisoformat(circle["expires_at"]) - datetime.now(timezone.utc)
+                if left.total_seconds() > 0:
+                    hours, minutes = divmod(int(left.total_seconds() // 60), 60)
+                    expires_in = f"{left.days}d {hours}h {minutes}m"
+            except ValueError:
+                expires_in = ""
+    return render(
+        request, "chain_review.html", page="circle", proposal=circle, members=members,
+        me=me, tasks=tasks, assignments=assignments, cycles=cycles, my_cycle=my_cycle,
+        loop_names=loop_names, start_proposal=start_proposal, recovery_case=recovery_case,
+        history=history, bonuses=bonuses, progress=progress, messages=messages,
+        expires_in=expires_in, confirmed_in_cycle=confirmed_in_cycle,
+        my_own_request=(me["request_id"] if me else None),
+        my_selected=(me["selected_request_id"] if me else None),
+        confirmed_ids={m["user_id"] for m in members if m["start_confirmed"]},
+        status_labels=CIRCLE_STATUS_LABELS,
+    )
 
 
-@app.post("/chains/{proposal_id}/interest")
-def chain_interest(request: Request, proposal_id: int, tasks: list[int] = Form([])):
-    """Record which of the other tasks this resident is willing to help with."""
+def _circle_pending_or_error(connection, proposal_id, user_id):
+    circle = circle_row(connection, proposal_id)
+    if not circle or circle["status"] not in ("pending", "start_confirming"):
+        return None, "This Circle is no longer open for changes."
+    me = member_row(connection, proposal_id, user_id)
+    if not me or me["response"] == "declined" or (me["status"] or "") == MEMBER_REMOVED:
+        return None, "You are not part of this Circle."
+    return circle, ""
+
+
+@app.post("/chains/{proposal_id}/select")
+def circle_select(request: Request, proposal_id: int, request_id: int = Form(...)):
+    """Spec 13/14: select one task and reserve it for this Circle."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        rows = chain_for_user(connection, proposal_id, user["id"])
-        if not rows or rows[0]["status"] not in ("pending", "active"):
-            return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
-        own = next((row["request_id"] for row in rows if row["user_id"] == user["id"]), None)
-        valid = {row["request_id"] for row in rows}
-        connection.execute(
-            "DELETE FROM chain_interest WHERE proposal_id=? AND user_id=?",
-            (proposal_id, user["id"]))
-        for task_id in tasks[:10]:
-            if task_id in valid and task_id != own:
-                connection.execute(
-                    """INSERT OR IGNORE INTO chain_interest(proposal_id,user_id,request_id,created_at)
-                       VALUES (?,?,?,?)""", (proposal_id, user["id"], task_id, now()))
-        if rows[0]["status"] == "active":
-            refresh_circle_assignment(connection, proposal_id)
-    return redirect_toast(f"/chains/{proposal_id}", "Saved the tasks you can help with")
+        expire_circles(connection)
+        _, error = _circle_pending_or_error(connection, proposal_id, user["id"])
+        if error:
+            return redirect_toast(f"/chains/{proposal_id}", error)
+        me = member_row(connection, proposal_id, user["id"])
+        action = switch_circle_task if me and me["selected_request_id"] else select_circle_task
+        ok, message = action(connection, proposal_id, user["id"], request_id)
+    return redirect_toast(f"/chains/{proposal_id}", message)
 
 
-def refresh_circle_assignment(connection: sqlite3.Connection, proposal_id: int) -> None:
-    """Re-run interest-based matching and wire the tasks up to the Circle."""
-    assignment = assign_circle_tasks(connection, proposal_id)
-    for row in assignment:
-        connection.execute(
-            """UPDATE requests
-               SET provider_id=?, status='negotiating', circle_id=?,
-                   negotiation_deadline=?
-               WHERE id=? AND provider_id IS NULL""",
-            (row["helper_id"], proposal_id,
-             (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"),
-             row["request_id"]),
-        )
-        notify(connection, row["helper_id"],
-               "A Circle is forming — open the task you chose to help with.",
-               f"/chat/{row['request_id']}", kind="action")
+@app.post("/chains/{proposal_id}/deselect")
+def circle_deselect(request: Request, proposal_id: int):
+    """Spec 18: the task stays Circle-exclusive but becomes selectable again."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        expire_circles(connection)
+        _, error = _circle_pending_or_error(connection, proposal_id, user["id"])
+        if error:
+            return redirect_toast(f"/chains/{proposal_id}", error)
+        ok, message = deselect_circle_task(connection, proposal_id, user["id"])
+    return redirect_toast(f"/chains/{proposal_id}", message)
 
 
 @app.post("/chains/{proposal_id}/respond")
 def chain_respond(request: Request, proposal_id: int, response: str = Form(...)):
+    """Spec 43: joining and leaving a pending Circle is free and unrestricted."""
     user = current_user(request)
     if not user or response not in {"accepted", "declined"}:
-        return RedirectResponse("/login" if not user else f"/chains/{proposal_id}", status_code=303)
+        return RedirectResponse("/login" if not user else f"/chains/{proposal_id}",
+                                status_code=303)
     with db() as connection:
-        expire_chain_proposals(connection)
-        rows = chain_for_user(connection, proposal_id, user["id"])
-        if not rows or rows[0]["status"] != "pending":
-            return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
-        connection.execute(
-            """UPDATE chain_members SET response=?, responded_at=?
-               WHERE proposal_id=? AND user_id=?""",
-            (response, now(), proposal_id, user["id"]),
-        )
-        accepted_rows = connection.execute(
-            """SELECT user_id, request_id FROM chain_members
-               WHERE proposal_id=? AND response='accepted' ORDER BY position""",
-            (proposal_id,),
-        ).fetchall()
-        if len(accepted_rows) >= 3:
+        expire_circles(connection)
+        circle = circle_row(connection, proposal_id)
+        if not circle or circle["status"] != "pending":
+            return redirect_toast(f"/chains/{proposal_id}",
+                                  "This Circle is no longer accepting replies.")
+        me = member_row(connection, proposal_id, user["id"])
+        if not me:
+            return redirect_toast(f"/chains/{proposal_id}", "You are not part of this Circle.")
+        if response == "declined":
+            if me["selected_request_id"]:
+                deselect_circle_task(connection, proposal_id, user["id"])
             connection.execute(
-                "UPDATE chain_proposals SET status='active', activated_at=? WHERE id=?",
-                (now(), proposal_id))
-            assignment = assign_circle_tasks(connection, proposal_id)
-            for row in assignment:
-                connection.execute(
-                    """UPDATE requests
-                       SET provider_id=?, provider_value=requester_value,
-                           provider_buffer=requester_buffer, status='negotiating',
-                           circle_id=?, negotiation_deadline=?
-                       WHERE id=? AND status='open'""",
-                    (row["helper_id"], proposal_id,
-                     (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"),
-                     row["request_id"]),
-                )
-                notify(
-                    connection,
-                    row["helper_id"],
-                    "The Circle activated. You have been matched to a task you said you could help with.",
-                    f"/chat/{row['request_id']}",
-                    kind="action",
-                )
-            unassigned = connection.execute(
-                """SELECT m.request_id, m.user_id FROM chain_members m
-                   WHERE m.proposal_id=? AND m.response='accepted'
-                     AND NOT EXISTS (SELECT 1 FROM chain_tasks t
-                                     WHERE t.proposal_id=m.proposal_id
-                                       AND t.request_id=m.request_id)""",
-                (proposal_id,)).fetchall()
-            for member in unassigned:
+                """UPDATE chain_members SET response='declined', responded_at=?, status=?
+                   WHERE proposal_id=? AND user_id=?""",
+                (now(), MEMBER_REMOVED, proposal_id, user["id"]))
+            connection.execute(
+                """UPDATE requests SET reservation_status=?, selected_by_user_id=NULL,
+                       circle_id=NULL WHERE id=? AND reservation_status IN (?,?)""",
+                (RESERVATION_RELEASED, me["request_id"], RESERVATION_PUBLIC,
+                 RESERVATION_CIRCLE))
+            for member in circle_member_rows(connection, proposal_id):
+                if member["user_id"] != user["id"]:
+                    notify(connection, member["user_id"],
+                           f"{user['name']} left this Circle suggestion.",
+                           f"/chains/{proposal_id}", kind="info")
+            if len(circle_member_rows(connection, proposal_id)) < CIRCLE_MIN_MEMBERS:
+                dissolve_circle(connection, proposal_id,
+                                "This Circle no longer has enough neighbours to form a loop.")
+            return redirect_toast("/chain-invitations", "You left this Circle suggestion.")
+        connection.execute(
+            """UPDATE chain_members SET response='accepted', responded_at=?,
+                   status=CASE WHEN selected_request_id IS NULL THEN ? ELSE ? END
+               WHERE proposal_id=? AND user_id=?""",
+            (now(), MEMBER_PENDING, MEMBER_SELECTED, proposal_id, user["id"]))
+        for member in circle_member_rows(connection, proposal_id):
+            if member["user_id"] != user["id"]:
                 notify(connection, member["user_id"],
-                       "The Circle activated, but nobody has been assigned your task yet. "
-                       "Check who you can help with to complete the loop.",
+                       f"{user['name']} joined this Circle suggestion.",
                        f"/chains/{proposal_id}", kind="action")
-            body = (
-                f"A Circle is active with {len(accepted_rows)} participants. Everyone gives help and "
-                "receives help; no credits move between neighbours."
-            )
-        elif response == "declined":
-            body = (
-                "A participant declined, but the invitation remains open while IoU looks "
-                "for the minimum of three willing participants."
-            )
-        else:
-            body = "A participant joined the task chain invitation."
-        members = connection.execute(
-            "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
-            (proposal_id, user["id"])).fetchall()
-        for member in members:
-            notify(connection, member["user_id"], body, f"/chains/{proposal_id}",
-                   kind="action" if response == "accepted" else "info")
-    return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
+    return redirect_toast(f"/chains/{proposal_id}", "You joined this Circle.")
 
 
-@app.post("/chains/{proposal_id}/leave")
-def chain_leave(request: Request, proposal_id: int):
+@app.post("/chains/{proposal_id}/propose-start")
+def circle_propose_start(request: Request, proposal_id: int):
+    """Spec 23/24: freeze the mapping and ask the loop to confirm."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        rows = chain_for_user(connection, proposal_id, user["id"])
-        if rows and rows[0]["status"] == "pending":
-            connection.execute(
-                "UPDATE chain_members SET response='left', responded_at=? WHERE proposal_id=? AND user_id=?",
-                (now(), proposal_id, user["id"]))
-            remaining = connection.execute(
-                "SELECT COUNT(*) c FROM chain_members WHERE proposal_id=? AND response!='left'",
-                (proposal_id,),
-            ).fetchone()["c"]
-            if remaining < 3:
-                connection.execute(
-                    "UPDATE chain_proposals SET status='cancelled', cancelled_at=? WHERE id=?",
-                    (now(), proposal_id))
-            for member in connection.execute(
-                "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
-                (proposal_id, user["id"])):
-                notify(connection, member["user_id"], "A neighbour left this Circle invitation.",
-                       f"/chains/{proposal_id}")
-        elif rows and rows[0]["status"] == "active":
-            handle_circle_withdrawal(connection, proposal_id, user["id"])
-    return RedirectResponse("/chain-invitations", status_code=303)
+        expire_circles(connection)
+        ok, message = propose_start(connection, proposal_id, user["id"])
+    return redirect_toast(f"/chains/{proposal_id}", message)
 
 
-def handle_circle_withdrawal(connection: sqlite3.Connection, proposal_id: int, user_id: int) -> None:
-    """Spec 39: someone walks away from a live Circle.
+@app.post("/chains/{proposal_id}/confirm-start")
+def circle_confirm_start(request: Request, proposal_id: int):
+    """Spec 25: every included member confirms the exact frozen mapping."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        expire_circles(connection)
+        ok, message = confirm_start(connection, proposal_id, user["id"])
+    return redirect_toast(f"/chains/{proposal_id}", message)
 
-    Completed work stays honoured; unmet needs go back on the board; the person
-    who received help but stops giving loses standing.
-    """
-    progress = circle_progress(connection, proposal_id)
-    connection.execute(
-        """UPDATE chain_members SET response='withdrawn', responded_at=?
-           WHERE proposal_id=? AND user_id=?""",
-        (now(), proposal_id, user_id))
-    connection.execute(
-        "DELETE FROM chain_tasks WHERE proposal_id=? AND helper_id=?", (proposal_id, user_id))
-    pending = connection.execute(
-        """SELECT ct.request_id, r.title FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
-           WHERE ct.proposal_id=? AND r.status NOT IN ('completed','resolved')""",
-        (proposal_id,)).fetchall()
-    for row in pending:
+
+@app.post("/chains/{proposal_id}/keep-editing")
+def circle_keep_editing(request: Request, proposal_id: int):
+    """Spec 26: cancel the proposal and reset every confirmation."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        invalidate_start_proposal(connection, proposal_id)
         connection.execute(
-            """UPDATE requests SET provider_id=NULL, provider_value=NULL, provider_buffer=NULL,
-                       status='open', circle_id=NULL, negotiation_deadline=NULL WHERE id=?""",
-            (row["request_id"],))
-        notify(connection,
-               connection.execute("SELECT requester_id FROM requests WHERE id=?",
-                                  (row["request_id"],)).fetchone()["requester_id"],
-               f"Your Circle partner withdrew, so \"{row['title']}\" is back on the board to repost.",
-               f"/requests/{row['request_id']}", kind="warning")
-    connection.execute(
-        "UPDATE chain_proposals SET status='dissolved', cancelled_at=? WHERE id=?",
-        (now(), proposal_id))
-    if progress["done"]:
-        apply_reliability_event(
-            connection, user_id, "broken_circle_commitment",
-            RELIABILITY_EVENTS["broken_circle_commitment"],
-            "Withdrew from an active Circle after neighbours had already been helped", None)
-    for member in connection.execute(
-            "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
-            (proposal_id, user_id)):
-        notify(connection, member["user_id"],
-               "A Circle neighbour withdrew. Tasks still open are back on the board and "
-               "completed work stays honoured.", f"/chains/{proposal_id}", kind="warning")
+            """UPDATE chain_members SET status=? WHERE proposal_id=? AND user_id=?
+               AND selected_request_id IS NOT NULL""",
+            (MEMBER_SELECTED, proposal_id, user["id"]))
+    return redirect_toast(f"/chains/{proposal_id}",
+                          "Start proposal cancelled — confirmations were reset.")
+
+
+@app.post("/chains/{proposal_id}/leave")
+def chain_leave(request: Request, proposal_id: int, reason: str = Form("")):
+    """Spec 43/44: free while pending; a withdrawal request once active."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        expire_circles(connection)
+        circle = circle_row(connection, proposal_id)
+        if not circle:
+            return redirect_toast("/chain-invitations", "That Circle does not exist.")
+        me = member_row(connection, proposal_id, user["id"])
+        if not me:
+            return redirect_toast("/chain-invitations", "You are not part of this Circle.")
+        if circle["status"] in ("pending", "start_confirming"):
+            return chain_respond(request, proposal_id, "declined")
+        case_id, message = request_circle_withdrawal(connection, proposal_id, user["id"], reason)
+    return redirect_toast(f"/chains/{proposal_id}", message)
+
+
+@app.get("/chains/{proposal_id}/recovery/{case_id}", response_class=HTMLResponse)
+def circle_recovery_page(request: Request, proposal_id: int, case_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        case = connection.execute(
+            "SELECT * FROM circle_recovery_cases WHERE id=? AND circle_id=?",
+            (case_id, proposal_id)).fetchone()
+        if not case:
+            return render(request, "error.html", message="That recovery case does not exist.")
+        circle = circle_row(connection, proposal_id)
+        owners = task_owner_map(connection, proposal_id)
+        owned_by_user = {uid: rid for rid, uid in owners.items()}
+        replacement_options = find_replacement_options(connection, proposal_id, case)
+        successor_task = owned_by_user.get(case["successor_user_id"])
+        successor_value = 0
+        if successor_task:
+            row = connection.execute("SELECT requester_value FROM requests WHERE id=?",
+                                     (successor_task,)).fetchone()
+            successor_value = int(row["requester_value"] or 0) if row else 0
+        names = {
+            "leaver": connection_name(connection, case["leaving_user_id"]),
+            "predecessor": connection_name(connection, case["predecessor_user_id"]),
+            "successor": connection_name(connection, case["successor_user_id"]),
+        }
+    return render(request, "circle_recovery.html", page="circle", case=case, proposal=circle,
+                  names=names, successors_value=successor_value,
+                  replacement_options=replacement_options,
+                  am_predecessor=user["id"] == case["predecessor_user_id"],
+                  am_successor=user["id"] == case["successor_user_id"])
+
+
+@app.post("/chains/{proposal_id}/recovery/{case_id}/choose")
+def circle_recovery_choose(request: Request, proposal_id: int, case_id: int,
+                           choice: str = Form(...), replacement_user_id: int | None = Form(None)):
+    """Spec 46/48/49/57: recover the loop, fall back to credits, or break."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        case = connection.execute(
+            "SELECT * FROM circle_recovery_cases WHERE id=? AND circle_id=?",
+            (case_id, proposal_id)).fetchone()
+        if not case or case["status"] != "open":
+            return redirect_toast(f"/chains/{proposal_id}", "That recovery case is closed.")
+        if choice == "break":
+            apply_reliability_penalty_for_withdrawal(connection, case)
+            if case["leaver_received_help"] and not case["leaver_completed_help"]:
+                apply_circle_breach_penalty(connection, case)
+            break_circle(connection, proposal_id,
+                         "The remaining neighbours chose to break the Circle.")
+            connection.execute(
+                "UPDATE circle_recovery_cases SET recovery_choice='break', status='resolved', "
+                "resolved_at=? WHERE id=?", (now(), case["id"]))
+            return redirect_toast(f"/chains/{proposal_id}", "Circle broken and settled.")
+        if choice == "replace":
+            ok, message = apply_replacement(connection, case, replacement_user_id)
+            return redirect_toast(f"/chains/{proposal_id}", message)
+        if choice == "redistribute":
+            apply_reliability_penalty_for_withdrawal(connection, case)
+            if redistribute_within_circle(connection, case):
+                return redirect_toast(f"/chains/{proposal_id}",
+                                      "The loop was restored without the withdrawing neighbour.")
+            settle_recovery_with_credits(connection, case)
+            return redirect_toast(f"/chains/{proposal_id}",
+                                  "Settled with credits so the delivered help is not lost.")
+        if choice == "credit_settlement":
+            apply_reliability_penalty_for_withdrawal(connection, case)
+            if case["leaver_received_help"] and not case["leaver_completed_help"]:
+                apply_circle_breach_penalty(connection, case)
+            settle_recovery_with_credits(connection, case)
+            break_circle(connection, proposal_id, "The Circle could not be restored.")
+            connection.execute(
+                "UPDATE circle_recovery_cases SET recovery_choice='credit_settlement', "
+                "status='resolved', resolved_at=? WHERE id=?", (now(), case["id"]))
+            return redirect_toast(f"/chains/{proposal_id}", "Settled with credits.")
+    return redirect_toast(f"/chains/{proposal_id}", "Unknown recovery choice.")
 
 
 @app.post("/chains/{proposal_id}/messages")
 def chain_message(request: Request, proposal_id: int, body: str = Form(...)):
+    """Spec 32: the Circle group chat."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
-        rows = chain_for_user(connection, proposal_id, user["id"])
-        if rows and body.strip():
+        circle = circle_row(connection, proposal_id)
+        if circle and body.strip():
             connection.execute(
                 "INSERT INTO chain_messages(proposal_id,sender_id,body,created_at) VALUES (?,?,?,?)",
                 (proposal_id, user["id"], body.strip(), now()))
-            for member in rows:
+            for member in circle_member_rows(connection, proposal_id):
                 if member["user_id"] != user["id"]:
-                    notify(connection, member["user_id"], "New message in your circular task chain.",
-                            f"/chains/{proposal_id}", kind="info")
+                    notify(connection, member["user_id"],
+                           "New message in your Circle group chat.",
+                           f"/chains/{proposal_id}", kind="info")
     return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
-
-
 @app.get("/notifications", response_class=HTMLResponse)
 def notifications_page(request: Request, tab: str = "system"):
     user = current_user(request)
@@ -2557,6 +3628,10 @@ def account_save(
     consent_analytics: str | None = Form(None),
     analytics_consent: str | None = Form(None),
     circle_enabled: str | None = Form(None),
+    circle_notifications: str | None = Form(None),
+    circle_community_only: str | None = Form(None),
+    circle_max_distance_km: float = Form(2.0),
+    circle_availability: str = Form(""),
     vis_photo: str | None = Form(None),
     vis_neighbourhood: str | None = Form(None),
     vis_skills: str | None = Form(None),
@@ -2575,12 +3650,16 @@ def account_save(
         connection.execute(
             """UPDATE users SET name=?, username=?, bio=?, address=?, district=?, address_id=?,
                    age=?, birthday=?, language=?, analytics_consent=?, consent_analytics=?,
-                   circle_enabled=?,
+                   circle_enabled=?, circle_notifications=?, circle_community_only=?,
+                   circle_max_distance_km=?, circle_availability=?,
                    vis_photo=?, vis_neighbourhood=?, vis_skills=?, vis_bio=?, vis_completed=?,
                    vis_circle=? WHERE id=?""",
             (name.strip(), username.strip() or None, bio.strip() or None, address.strip(),
              district, district, age, birthday.strip() or None, language, opted_in, opted_in,
-             1 if circle_enabled else 0,
+             1 if circle_enabled else 0, 1 if circle_notifications else 0,
+             1 if circle_community_only else 0,
+             circle_max_distance_km if circle_max_distance_km > 0 else 2.0,
+             (circle_availability or "").strip()[:200],
              1 if vis_photo else 0, 1 if vis_neighbourhood else 0, 1 if vis_skills else 0,
              1 if vis_bio else 0, 1 if vis_completed else 0, 1 if vis_circle else 0,
              user["id"]),
@@ -2990,6 +4069,31 @@ def give_kudos(request: Request, request_id: int, next: str = Form(""), tags: li
                WHERE t.request_id=? AND t.requester_id=? AND r.status IN ('completed','resolved')""",
             (request_id, user["id"]),
         ).fetchone()
+        task = load_request(connection, request_id)
+        # Spec 39/40: a Circle task has no transaction, but the thumbs-up still
+        # earns a bonus of 10% of the owner's original proposed value. It is
+        # recorded immediately and only paid out once the Circle is fully settled.
+        if (not item and task and task["circle_id"] and task["requester_id"] == user["id"]
+                and task["status"] in ("completed", "resolved")):
+            base = circle_original_value(connection, task["circle_id"], request_id)
+            bonus = round(base * CIRCLE_BONUS_RATE, 1)
+            if bonus > 0:
+                connection.execute(
+                    """INSERT OR IGNORE INTO circle_bonuses(circle_id,request_id,provider_id,
+                           requester_id,amount,status,created_at)
+                       VALUES (?,?,?,?,?,'pending',?)""",
+                    (task["circle_id"], request_id, task["provider_id"], user["id"],
+                     bonus, now()))
+                apply_reliability_event(
+                    connection, task["provider_id"], "thumbs_up", RELIABILITY_EVENTS["thumbs_up"],
+                    "Received a thumbs-up for a completed Circle task", request_id)
+                add_message(connection, request_id, None, "system",
+                            f"Kudos! A Circle appreciation bonus of +{bonus:.1f} credits is "
+                            "recorded and will be paid when the Circle is fully settled.")
+                notify(connection, task["provider_id"],
+                       f"You received Kudos — +{bonus:.1f} credits once this Circle settles.",
+                       f"/requests/{request_id}", kind="success")
+            return redirect_back(next, f"/requests/{request_id}")
         if item and not item["kudos_given"]:
             bonus = max(1, round(item["value"] * 0.10))
             connection.execute(
@@ -3239,6 +4343,26 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
                           message="This task is only open to members of its community.")
         if not allowed:
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        # Spec 14/17: a Circle-reserved task can never be taken by an outsider.
+        if (item["status"] == "open"
+                and (item["reservation_status"] or RESERVATION_PUBLIC) != RESERVATION_PUBLIC):
+            return render(request, "error.html", message=(
+                "Sorry — this task just became unavailable. It is reserved through a Circle."
+            ))
+        # Spec 16: an outsider taking an unselected Circle task wins; the task and
+        # its owner leave the Circle immediately. Pending Circles associate the
+        # task through chain_members, not requests.circle_id.
+        if item["status"] == "open":
+            pending_circle = connection.execute(
+                """SELECT cm.proposal_id FROM chain_members cm
+                   JOIN chain_proposals cp ON cp.id=cm.proposal_id
+                   WHERE cm.request_id=? AND cm.response!='declined'
+                     AND COALESCE(cm.status,'pending')!='removed'
+                     AND cp.status IN ('pending','start_confirming')""",
+                (request_id,)).fetchone()
+            if pending_circle:
+                remove_task_from_circle(connection, pending_circle["proposal_id"], request_id,
+                                        "taken_by_outside_provider")
         value = item["requester_value"] if mode == "accept" else max(1, amount or 1)
         offer_buffer = max(0, offer_buffer)
         if mode != "accept":
