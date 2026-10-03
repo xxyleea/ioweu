@@ -369,7 +369,7 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .bubble-state{display:inline-block;margin-top:.4rem;font-size:.75rem;color:var(--muted);text-transform:capitalize}
 .state-accepted{outline:2px solid var(--green)}
 .state-declined,.state-countered,.state-replaced{opacity:.65}
-.btn-small{padding:.35rem .8rem;border-radius:999px;font-size:.8rem;border:1.5px solid var(--ink);background:var(--card);cursor:pointer}
+.btn-small{padding:.35rem .8rem;border-radius:999px;font-size:.8rem;border:1.5px solid var(--ink);background:var(--card);color:var(--ink);cursor:pointer}
 .btn-small.btn-primary{background:var(--ink);color:#fff}
 
 .chat-thread.readonly{max-height:20rem;overflow-y:auto;display:flex;flex-direction:column;gap:.5rem}
