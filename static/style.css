@@ -1010,3 +1010,35 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
 
 /* ---------- offer modal hint ---------- */
 .opt-hint{font-size:.74rem;line-height:1.35}
+
+/* ---------- wechat-style file card ---------- */
+.file-card{display:flex;align-items:center;gap:.8rem;min-width:230px;max-width:300px;background:rgba(250,246,238,.75);border:1px solid rgba(35,39,43,.06);border-radius:12px;padding:.6rem .75rem;text-decoration:none;color:var(--ink);margin:.15rem 0}
+.file-card:hover{background:#fff}
+.file-info{flex:1;min-width:0;display:flex;flex-direction:column;gap:.1rem}
+.file-name{font-size:.85rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.file-badge{flex-shrink:0;width:42px;height:48px;border-radius:8px 8px 8px 3px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.62rem;font-weight:800;letter-spacing:.04em;background:#e79b86;position:relative}
+.file-badge::after{content:"";position:absolute;top:0;right:0;border-style:solid;border-width:0 10px 10px 0;border-color:rgba(255,255,255,.55) transparent transparent transparent;border-radius:0 8px 0 6px}
+.fb-txt{background:#b8b2aa}
+.fb-pdf{background:#e79b86}
+.fb-doc,.fb-docx{background:#a9bfce}
+.fb-default{background:#c9b391}
+
+/* ---------- offer amount input: force readable colours ---------- */
+.opt-input{color:#23272b;background:#fff;-webkit-text-fill-color:#23272b}
+.offer-option input[type=number]{color:#23272b;background:#fff}
+
+/* ---------- jar v4: real bottle cut-out ---------- */
+.jar-stack{position:relative;height:470px;display:flex;justify-content:center}
+.jar-glass-img{height:100%;width:auto;display:block;filter:drop-shadow(0 12px 22px rgba(35,39,43,.07))}
+.jar-water-svg{position:absolute;left:5.5%;right:5.5%;top:14.3%;bottom:0.7%;width:89%;height:85%}
+.comm-jar-wrap{max-width:300px;margin:0 auto}
+@media(max-width:900px){.jar-stack{height:400px}}
+
+/* ---------- jar v5: clean bottle-shape svg ---------- */
+.jar-stack{display:flex;justify-content:center;height:auto}
+.comm-jar{width:250px;height:auto;display:block;filter:drop-shadow(0 12px 22px rgba(35,39,43,.07))}
+.jar-glass{fill:rgba(255,255,255,.30)}
+
+/* ---------- breathing room between stacked page cards ---------- */
+.content>.card{margin-bottom:1.4rem}
+.exchange-row{background:var(--bg);border-radius:14px}

@@ -48,46 +48,43 @@
 </div>
 {% else %}
 {% set level = current.water_level %}
-{% set water_y = (372 - 332 * level / 100)|round|int %}
+{% set water_y = (1168 - 1030 * level / 100)|round|int %}
 {% set rise_pct = stone_info.credits * 3 if stone_info else 0 %}
 {% set pre_level = [level - rise_pct, 18]|max %}
-{% set pre_y = (372 - 332 * pre_level / 100)|round|int %}
+{% set pre_y = (1168 - 1030 * pre_level / 100)|round|int %}
 
 <section class="comm-hero card">
   <div class="comm-jar-wrap" id="jar-wrap">
-    <svg class="comm-jar" viewBox="0 0 340 400" aria-label="Community water jar, {{ level }} percent full">
-      <defs>
-        <clipPath id="jarClip">
-          <path d="M118 34 H222 C222 66 216 76 238 98 C262 122 272 168 272 226 C272 310 238 372 170 372 C102 372 68 310 68 226 C68 168 78 122 102 98 C124 76 118 66 118 34 Z"/>
-        </clipPath>
-      </defs>
-      <!-- soft shadow under the jar -->
-      <ellipse cx="170" cy="386" rx="96" ry="9" fill="rgba(35,39,43,.06)"/>
-      <!-- water: two drifting pastel waves -->
-      <g clip-path="url(#jarClip)">
-        <g class="jar-water-group" id="jarWater" style="transform: translateY({{ (water_y - pre_y) }}px); transition: none;">
-          <path class="wave wave-back" d="M-160 8 Q-135 -14 -110 2 T-60 2 T-10 2 T40 2 T90 2 T140 2 T190 2 T240 2 T290 2 T340 2 T390 2 T440 2 T490 2 V440 H-160 Z" fill="#d8e8f7"/>
-          <path class="wave wave-front" d="M-160 10 Q-135 -10 -110 4 T-60 4 T-10 4 T40 4 T90 4 T140 4 T190 4 T240 4 T290 4 T340 4 T390 4 T440 4 T490 4 V440 H-160 Z" fill="#c2d9f2"/>
+    <div class="jar-stack">
+      <svg class="comm-jar" viewBox="0 0 300 1200" aria-label="Community water jar, {{ level }} percent full">
+        <defs>
+          <clipPath id="jarInnerClip">
+            <path d="M85 138 H215 C215 166 212 182 240 212 C262 236 283 264 283 332 V1078 C283 1136 250 1168 150 1168 C50 1168 17 1136 17 1078 V332 C17 264 38 236 60 212 C88 182 85 166 85 138 Z"/>
+          </clipPath>
+        </defs>
+        <ellipse cx="150" cy="1188" rx="105" ry="10" fill="rgba(35,39,43,.06)"/>
+        <!-- animated water + pebbles, clipped to the inner bottle shape -->
+        <g clip-path="url(#jarInnerClip)">
+          <g class="jar-water-group" id="jarWater" style="transform: translateY({{ (water_y - pre_y) }}px); transition: none;">
+            <path class="wave wave-back" d="M-160 8 Q-135 -14 -110 2 T-60 2 T-10 2 T40 2 T90 2 T140 2 T190 2 T240 2 T290 2 T340 2 T390 2 T440 2 T490 2 V1300 H-160 Z" fill="#d8e8f7"/>
+            <path class="wave wave-front" d="M-160 10 Q-135 -10 -110 4 T-60 4 T-10 4 T40 4 T90 4 T140 4 T190 4 T240 4 T290 4 T340 4 T390 4 T440 4 T490 4 V1300 H-160 Z" fill="#c2d9f2"/>
+          </g>
+          {% set stone_count = [current.exchanges, 14]|min %}
+          {% for i in range(stone_count) %}
+          <image class="jar-pebble" href="/static/stones/pebble_{{ (i * 7) % 25 }}.png"
+                 x="{{ 34 + (i * 49) % 208 }}" y="{{ 1046 - (i * 26) % 96 }}"
+                 width="{{ 48 + (i * 8) % 22 }}" opacity=".97"/>
+          {% endfor %}
         </g>
-        {% set stone_count = [current.exchanges, 14]|min %}
-        {% for i in range(stone_count) %}
-        <image class="jar-pebble" href="/static/stones/pebble_{{ (i * 7) % 25 }}.png"
-               x="{{ 88 + (i * 43) % 168 }}" y="{{ 318 - (i * 17) % 46 }}"
-               width="{{ 34 + (i * 6) % 18 }}" opacity=".97"/>
-        {% endfor %}
-      </g>
-      <!-- glass body: barely-there outline, rounded like the reference bottle -->
-      <path class="jar-glass" d="M118 34 H222 C222 66 216 76 238 98 C262 122 272 168 272 226 C272 310 238 372 170 372 C102 372 68 310 68 226 C68 168 78 122 102 98 C124 76 118 66 118 34 Z"
-            fill="rgba(255,255,255,.28)" stroke="rgba(35,39,43,.22)" stroke-width="3" stroke-linejoin="round"/>
-      <rect x="106" y="16" width="128" height="24" rx="12" fill="rgba(255,255,255,.5)" stroke="rgba(35,39,43,.22)" stroke-width="3"/>
-      <!-- a quiet crow, watching the water rise -->
-      <g class="jar-crow" transform="translate(272 292)">
-        <path d="M18 62 C6 58 0 46 4 34 C7 24 16 18 26 20 L44 24 L58 16 L52 30 C56 40 52 54 40 60 C33 64 25 64 18 62 Z" fill="#23272b"/>
-        <circle cx="46" cy="24" r="2.2" fill="#faf6ee"/>
-        <path d="M58 16 L70 20 L56 26 Z" fill="#23272b"/>
-        <path d="M20 62 L18 74 M32 62 L33 74" stroke="#23272b" stroke-width="2.5" stroke-linecap="round"/>
-      </g>
-    </svg>
+        <!-- clean glass body drawn over the water -->
+        <path class="jar-glass" d="M75 128 H225 C225 160 222 175 250 205 C275 232 293 260 293 330 V1080 C293 1146 258 1178 150 1178 C42 1178 7 1146 7 1080 V330 C7 260 25 232 50 205 C78 175 75 160 75 128 Z"
+              fill="rgba(255,255,255,.30)" stroke="rgba(35,39,43,.16)" stroke-width="3" stroke-linejoin="round"/>
+        <!-- neck + cap, like the reference bottle -->
+        <path d="M84 128 V96 C84 82 92 74 106 74 H194 C208 74 216 82 216 96 V128 Z" fill="rgba(255,255,255,.30)" stroke="rgba(35,39,43,.16)" stroke-width="3" stroke-linejoin="round"/>
+        <rect x="70" y="8" width="160" height="76" rx="24" fill="#4a7fd9"/>
+        <rect x="70" y="8" width="160" height="76" rx="24" fill="rgba(255,255,255,.14)"/>
+      </svg>
+    </div>
 
     {% if stone_info %}
     <div class="stone-overlay" id="stoneOverlay">

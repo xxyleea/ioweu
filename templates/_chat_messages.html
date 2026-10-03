@@ -84,7 +84,13 @@
             {% if ext in ('png','jpg','jpeg') %}
             <a class="chat-image" href="/uploads/{{ m.attachment }}" target="_blank"><img src="/uploads/{{ m.attachment }}" alt="Shared image"></a>
             {% else %}
-            <a class="chat-file" href="/uploads/{{ m.attachment }}" target="_blank">📄 Download attachment</a>
+            <a class="file-card" href="/uploads/{{ m.attachment }}" target="_blank">
+              <span class="file-info">
+                <b class="file-name">{{ m.attachment.rsplit('/', 1)[-1] }}</b>
+                <small class="muted">{{ file_size(m.attachment) }}</small>
+              </span>
+              <span class="file-badge fb-{{ ext }}">{{ ext|upper }}</span>
+            </a>
             {% endif %}
           {% endif %}
           {% if m.body %}<p class="chat-text">{{ m.body }}</p>{% endif %}

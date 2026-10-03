@@ -378,6 +378,21 @@ templates.env.filters["hktime"] = lambda value: _hk(value, "%H:%M")
 templates.env.filters["hkdate"] = lambda value: _hk(value, "%d %b %Y")
 
 
+def _file_size(stored_name: str) -> str:
+    try:
+        size = (UPLOAD_DIR / stored_name).stat().st_size
+    except OSError:
+        return ""
+    if size >= 1024 * 1024:
+        return f"{size / 1048576:.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
+
+
+templates.env.globals["file_size"] = _file_size
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
