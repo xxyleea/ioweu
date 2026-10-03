@@ -4093,12 +4093,6 @@ def create_request(
                               message="You can only post to communities you belong to.")
             community_id_value = community_id
         suggested = recommendation(connection, category, effort_minutes, complexity)
-        if (offered_value < suggested["range"][0] or offered_value > suggested["range"][1]) and confirm_outside_range != "1":
-            return render(request, "error.html", message=(
-                f"Warning: {offered_value} credits is outside the recommended "
-                f"{suggested['range'][0]}–{suggested['range'][1]} range. "
-                "Return to the form, adjust the offer, or tick the confirmation checkbox to proceed."
-            ))
         connection.execute(
             """INSERT INTO requests(
                 title,description,category,location,needed_by,urgency,preferred_time,requester_id,
