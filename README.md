@@ -88,15 +88,20 @@ uvicorn app:app --reload
 Escalations notify every moderator account, and the moderator queue lives on the dashboard. Set `IOWEU_SESSION_SECRET` before deploying; otherwise a random per-process secret is generated.
 
 
-## Seed recommendation history
+## Seed demo data
 
-To add realistic completed exchanges for the estimator:
+To build a fresh, realistic demo database (14 residents, completed history, open
+requests, four Circle states, disputes, and chat threads):
 
 ```powershell
-python seed_demo_data.py
+./.venv/Scripts/python.exe seed_showcase.py
 ```
 
-The seeder is idempotent and creates 12 local demo transactions across errands, childcare, tech help, and home tasks. The recommendation endpoint uses the recent 90-day category median as its historical benchmark, then adjusts it for effort, complexity, and quality:
+The seeder is idempotent and prices every task with the app's own recommendation
+engine, so the deterministic checker always agrees with the board. It wipes and
+rebuilds `ioweu.db`, which is intentionally not committed to git. The recommendation
+endpoint uses the recent 90-day category median as its historical benchmark, then
+adjusts it for effort, complexity, and quality:
 
 ```text
 recommended credits =
