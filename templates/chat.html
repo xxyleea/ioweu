@@ -14,6 +14,8 @@
       <span class="thread-preview">{{ p.last_body or 'No messages yet' }}</span>
     </span>
   </a>
+  {% else %}
+  <p class="rail-empty muted">No one else here yet — send the first message below.</p>
   {% endfor %}
 </aside>
 
@@ -24,7 +26,7 @@
       <a href="/report?request_id={{ item.id }}">Report</a>
       {% set other_id = item.requester_id if item.requester_id != user.id else item.provider_id %}
       {% if other_id %}
-      <form method="post" action="/users/{{ other_id }}/block"><input type="hidden" name="next" value="/messages"><button>Block resident</button></form>
+      <form method="post" action="/users/{{ other_id }}/block" onsubmit="return confirm('Block this resident? You will no longer see each other\'s tasks or messages.')"><input type="hidden" name="next" value="/messages"><button>Block resident</button></form>
       {% endif %}
     </div>
   </details>
@@ -76,12 +78,6 @@
 </div>
 
 <div class="chat-toolbar">
-  {% if item.status in ('negotiating','agreement_pending') or (item.status == 'open' and item.requester_id != user.id) %}
-  <button class="btn-ghost" data-modal-open="offer-modal">💰 Make an offer</button>
-  {% endif %}
-  {% if item.status in ('confirmed','scheduled') %}
-  <button class="btn-ghost" data-modal-open="meetup-modal">📅 Propose meeting</button>
-  {% endif %}
   {% if item.status == 'in_progress' and item.provider_id == user.id %}
   <button class="btn-ghost" data-modal-open="complete-modal">✔ Mark as Complete</button>
   {% endif %}
@@ -118,7 +114,7 @@
   <button class="btn-primary">Send</button>
 </form>
 <p class="chat-footnote">
-  <span id="attach-name"></span>
+  <span id="attach-name" class="attach-chip" hidden></span>
   {% if item.status in ('open','negotiating','agreement_pending') %}
   Messages may be reviewed by a moderator if a dispute is raised. System notices can't be deleted.
   {% endif %}
@@ -230,7 +226,7 @@
     <h2>Suggest a resolution</h2>
     <p class="muted">{{ item.agreed_value }} credits are frozen. Propose how many go back to the requester.</p>
     <form method="post" action="/requests/{{ item.id }}/settlement" class="modal-form">
-      <label>Refund to requester (0–{{ item.agreed_value }})<input type="number" name="amount" min="0" max="{{ item.agreed_value }}" value="{{ item.agreed_value // 2 }}" required></label>
+      <label>Refund to requester (0–{{ item.agreed_value }})<input type="number" name="amount" min="0" max="{{ item.agreed_value }}" value="{{ item.agreed_value // 2 }}" placeholder="e.g. {{ item.agreed_value // 2 }}" required></label>
       <label>Resolution
         <select name="resolution">
           <option value="refund">Refund credits</option>
@@ -321,7 +317,16 @@ const attachInput = document.getElementById('attach-input');
 const attachName = document.getElementById('attach-name');
 if (attachInput) {
   attachInput.addEventListener('change', () => {
-    attachName.textContent = attachInput.files.length ? '📎 ' + attachInput.files[0].name : '';
+    if (attachInput.files.length) {
+      attachName.textContent = '📎 ' + attachInput.files[0].name + '  ✕';
+      attachName.hidden = false;
+    } else {
+      attachName.hidden = true;
+    }
+  });
+  attachName.addEventListener('click', () => {
+    attachInput.value = '';
+    attachName.hidden = true;
   });
 }
 /* conversation starter chips */

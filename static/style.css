@@ -917,3 +917,8 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
 
 /* ---------- system notices: centered pills ---------- */
 .chat-messages .chat-system{text-align:center;margin:.2rem auto;max-width:80%}
+
+/* ---------- attachment chip + rail empty ---------- */
+.attach-chip{display:inline-flex;align-items:center;gap:.3rem;background:var(--bg);border:1.5px solid var(--line);border-radius:999px;padding:.3rem .8rem;font-size:.78rem;font-weight:600;color:var(--ink);cursor:pointer}
+.attach-chip:hover{border-color:#c0392b;color:#c0392b}
+.rail-empty{padding:1rem 1.1rem;font-size:.82rem}
