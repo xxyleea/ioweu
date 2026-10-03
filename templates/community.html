@@ -69,12 +69,11 @@
           <path class="wave wave-back" d="M-160 8 Q-135 -14 -110 2 T-60 2 T-10 2 T40 2 T90 2 T140 2 T190 2 T240 2 T290 2 T340 2 T390 2 T440 2 T490 2 V440 H-160 Z" fill="#d8e8f7"/>
           <path class="wave wave-front" d="M-160 10 Q-135 -10 -110 4 T-60 4 T-10 4 T40 4 T90 4 T140 4 T190 4 T240 4 T290 4 T340 4 T390 4 T440 4 T490 4 V440 H-160 Z" fill="#c2d9f2"/>
         </g>
-        {% set palette = ["#b8b2aa", "#d9c1b8", "#c9b391", "#8e8e8a", "#a9bfce", "#cfc8bd"] %}
         {% set stone_count = [current.exchanges, 14]|min %}
         {% for i in range(stone_count) %}
-        <path class="jar-stone" fill="{{ palette[i % 6] }}" opacity=".95"
-              d="M{{ 92 + (i * 41) % 170 }} {{ 340 - (i * 15) % 44 }}
-                 q4 -9 14 -9 q11 0 14 8 q3 9 -5 13 q-9 5 -18 2 q-8 -3 -5 -14 Z"/>
+        <image class="jar-pebble" href="/static/stones/pebble_{{ (i * 7) % 25 }}.png"
+               x="{{ 88 + (i * 43) % 168 }}" y="{{ 318 - (i * 17) % 46 }}"
+               width="{{ 34 + (i * 6) % 18 }}" opacity=".97"/>
         {% endfor %}
       </g>
       <!-- glass body: barely-there outline, rounded like the reference bottle -->
@@ -92,7 +91,7 @@
 
     {% if stone_info %}
     <div class="stone-overlay" id="stoneOverlay">
-      <div class="stone-fall" id="stoneFall"></div>
+      <img class="stone-fall" id="stoneFall" src="/static/stones/pebble_{{ (current.exchanges * 7) % 25 }}.png" alt="">
       <div class="stone-ripple" id="stoneRipple"></div>
       <div class="stone-caption" id="stoneCaption" hidden>
         <b>+{{ stone_info.credits }} credits · one more stone</b>
