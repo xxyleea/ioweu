@@ -114,7 +114,7 @@
       <div class="avatar">{{ requester_profile.name[0] }}</div>
       <div>
         <b>{{ requester_profile.name.split(' ')[0] }}{{ ' ' ~ requester_profile.name.split(' ')[-1][0] ~ '.' if requester_profile.name.split(' ')|length > 1 else '' }}</b>
-        <small class="muted">Reliability {{ requester_profile.reliability }}/100 · 👍 {{ requester_thumbs }} · 📍 {{ item.location or requester_profile.district or 'nearby' }}</small>
+        <small class="muted">Reliability {{ requester_profile.reliability }}/100 · ♥ {{ requester_thumbs }} · 📍 {{ item.location or requester_profile.district or 'nearby' }}</small>
       </div>
       {% if not is_owner %}<form method="post" action="/users/{{ item.requester_id }}/block"><input type="hidden" name="next" value="/requests/{{ item.id }}"><button class="btn-ghost btn-sm danger">Block</button></form>{% endif %}
     </div>

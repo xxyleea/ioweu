@@ -25,6 +25,16 @@
 </aside>
 
 <div class="chat-main card">
+  <details class="chat-menu">
+    <summary title="More options">⋯</summary>
+    <div class="chat-menu-pop">
+      <a href="/report?request_id={{ item.id }}">Report</a>
+      {% set other_id = item.requester_id if item.requester_id != user.id else item.provider_id %}
+      {% if other_id %}
+      <form method="post" action="/users/{{ other_id }}/block"><input type="hidden" name="next" value="/messages"><button>Block resident</button></form>
+      {% endif %}
+    </div>
+  </details>
   <details class="ws-context">
     <summary>
       <span class="tt-body">
@@ -73,7 +83,7 @@
 </div>
 
 <div class="chat-toolbar">
-  {% if item.status in ('negotiating','agreement_pending') %}
+  {% if item.status in ('negotiating','agreement_pending') or (item.status == 'open' and item.requester_id != user.id) %}
   <button class="btn-ghost" data-modal-open="offer-modal">💰 Make an offer</button>
   {% endif %}
   {% if item.status in ('confirmed','scheduled') %}
@@ -96,12 +106,22 @@
   {% endif %}
 </div>
 
+{% if not messages %}
+<div class="chat-suggest">
+  <small class="muted">Not sure how to start? Try one of these:</small>
+  <div class="chat-suggest-chips">
+    <button type="button" class="suggest-chip" data-say="Hi! I can help with this — when would suit you?">Hi! I can help with this — when suits you?</button>
+    <button type="button" class="suggest-chip" data-say="Could you tell me a bit more about what you need?">Could you tell me more about what you need?</button>
+    <button type="button" class="suggest-chip" data-say="I'm flexible on timing this week.">I'm flexible on timing this week.</button>
+  </div>
+</div>
+{% endif %}
 <form class="chat-input" method="post" action="/chat/{{ item.id }}" enctype="multipart/form-data">
   <label class="attach-btn" title="Attach an image or document">
     <input type="file" name="attachment" accept=".png,.jpg,.jpeg,.pdf,.txt" id="attach-input" hidden>
     📎
   </label>
-  <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status in ('disputed','mediation') %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off">
+  <input name="body" id="chat-body-input" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status in ('disputed','mediation') %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off" autofocus>
   <button class="btn-primary">Send</button>
 </form>
 <p class="chat-footnote">
@@ -109,16 +129,13 @@
   {% if item.status in ('open','negotiating','agreement_pending') %}
   Messages may be reviewed by a moderator if a dispute is raised. System notices can't be deleted.
   {% endif %}
-  <a class="tiny-link" href="/report?request_id={{ item.id }}">Report</a>
-  {% set other_id = item.requester_id if item.requester_id != user.id else item.provider_id %}
-  {% if other_id %}<form method="post" action="/users/{{ other_id }}/block" class="inline-form"><input type="hidden" name="next" value="/chat/{{ item.id }}"><button class="tiny-link danger">Block resident</button></form>{% endif %}
 </p>
 </div>
 
 
 </div>
 
-{% if item.status in ('negotiating','agreement_pending') %}
+{% if item.status in ('open','negotiating','agreement_pending') %}
 <div class="modal" id="offer-modal" hidden>
   <div class="modal-card">
     <h2>Make an offer</h2>
@@ -158,10 +175,25 @@
   <div class="modal-card">
     <h2>Propose a meeting</h2>
     <form method="post" action="/requests/{{ item.id }}/meetup" class="modal-form">
+      <label class="check-row"><input type="checkbox" name="online" value="1" id="meetup-online"> Online — no meetup location needed</label>
       <label>Date<input type="date" name="date" required></label>
-      <label>Time<input type="time" name="time" required></label>
-      <label>Location<input type="text" name="location" required placeholder="e.g. MTR station exit A" value="{{ item.location or '' }}"></label>
+      <div id="meetup-time-row"><label>Time<input type="time" name="time"></label></div>
+      <div id="meetup-loc-row"><label>Location<input type="text" name="location" id="meetup-loc-input" placeholder="e.g. MTR station exit A" value="{{ item.location if item.location and item.location != 'Online' else '' }}"></label></div>
       <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send proposal</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if item.status == 'scheduled' %}
+<div class="modal" id="start-task-modal" hidden>
+  <div class="modal-card">
+    <h2>Start Task</h2>
+    <p>Meeting confirmed{% if item.meetup_date %} for <b>{{ item.meetup_date }}{% if item.meetup_time and item.meetup_time != 'Any time' %} at {{ item.meetup_time }}{% endif %}</b>{% endif %}. Start the task when you're ready.</p>
+    <form method="post" action="/requests/{{ item.id }}/start" class="modal-actions">
+      <input type="hidden" name="next" value="/chat/{{ item.id }}">
+      <button type="button" class="btn-ghost" data-modal-close>Back</button>
+      <button class="btn-primary">Start Task</button>
     </form>
   </div>
 </div>
@@ -299,5 +331,26 @@ if (attachInput) {
     attachName.textContent = attachInput.files.length ? '📎 ' + attachInput.files[0].name : '';
   });
 }
+/* conversation starter chips */
+const bodyInput = document.getElementById('chat-body-input');
+document.querySelectorAll('.suggest-chip').forEach(c => c.addEventListener('click', () => {
+  if (!bodyInput) return;
+  bodyInput.value = c.dataset.say;
+  bodyInput.focus();
+}));
+/* meetup: online option hides time & location */
+const meetOnline = document.getElementById('meetup-online');
+if (meetOnline) {
+  const timeRow = document.getElementById('meetup-time-row');
+  const locRow = document.getElementById('meetup-loc-row');
+  const locInput = document.getElementById('meetup-loc-input');
+  meetOnline.addEventListener('change', () => {
+    const on = meetOnline.checked;
+    timeRow.hidden = on;
+    locRow.hidden = on;
+    if (on) { locInput.value = 'Online'; } else if (locInput.value === 'Online') { locInput.value = ''; }
+  });
+}
+window.addEventListener('load', () => { if (bodyInput) bodyInput.focus(); });
 </script>
 {% endblock %}

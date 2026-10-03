@@ -3,7 +3,7 @@
 <body class="app-body">
 <nav class="sidebar">
   <div class="brand-row">
-    <a class="brand" href="/"><img class="brand-logo" src="/static/iou-logo2.png" alt="IoU"></a>
+    <a class="brand" href="/"><span class="brand-dot"></span>IoU</a>
     {% if user %}
     <a class="bell {% if page == 'notifications' %}active{% endif %}" href="/notifications" title="Notifications">🔔{% if unread_notifs or unread_msgs %}<span class="bell-badge">{{ (unread_notifs or 0) + (unread_msgs or 0) }}</span>{% endif %}</a>
     {% endif %}

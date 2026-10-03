@@ -314,11 +314,13 @@ TASK_CATEGORIES = (
     "family & kids",
     "pets & animals",
     "community",
+    "others",
 )
 GENRE_EMOJI = {
     "daily life": "🏠", "education": "📚", "technology": "💻", "creative": "🎨",
     "repair & diy": "🔧", "transport": "🚗", "companionship": "🧑‍🤝‍🧑",
     "family & kids": "👶", "pets & animals": "🐶", "community": "🌱",
+    "others": "🗂️",
 }
 # Categories where a photo usually isn't appropriate — the requester's own
 # confirmation is accepted as proof instead.
@@ -1567,7 +1569,7 @@ def chain_invitations(request: Request):
                JOIN chain_members allm ON allm.proposal_id=cp.id
                WHERE cm.user_id=? GROUP BY cp.id ORDER BY cp.created_at DESC""",
             (user["id"],)).fetchall()
-    return render(request, "chain_invitations.html", page="home", proposals=proposals)
+    return render(request, "chain_invitations.html", page="circle", proposals=proposals)
 
 
 @app.get("/chains/suggestions", response_class=HTMLResponse)
@@ -1579,7 +1581,7 @@ def chain_suggestions(request: Request):
         ensure_chain_invitations(connection)
         matches = [m for m in detect_circular_matches(connection)
                    if user["id"] in m["users"]]
-    return render(request, "chain_suggestions.html", page="home", matches=matches)
+    return render(request, "chain_suggestions.html", page="circle", matches=matches)
 
 
 @app.post("/chains/propose")
@@ -1629,7 +1631,7 @@ def chain_review(request: Request, proposal_id: int):
                 (proposal_id, user["id"]))
         }
         progress = circle_progress(connection, proposal_id)
-    return render(request, "chain_review.html", proposal=rows[0], members=rows,
+    return render(request, "chain_review.html", page="circle", proposal=rows[0], members=rows,
                   tasks=tasks, all_members=all_members, my_interests=my_interests,
                   my_own_request=next((m["request_id"] for m in rows
                                        if m["user_id"] == user["id"]), None),
@@ -2991,7 +2993,7 @@ def confirm_exchange(request: Request, request_id: int):
 
 @app.post("/requests/{request_id}/meetup")
 def propose_meetup(request: Request, request_id: int, date: str = Form(...),
-                   time: str = Form(...), location: str = Form(...)):
+                   time: str = Form(""), location: str = Form("")):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -3004,11 +3006,15 @@ def propose_meetup(request: Request, request_id: int, date: str = Form(...),
         old = pending_message(connection, request_id, "meetup")
         if old:
             connection.execute("UPDATE messages SET status='replaced' WHERE id=?", (old["id"],))
-        add_message(connection, request_id, user["id"], "meetup",
-                    f"Meeting proposal: {date} at {time}, {location}",
-                    meta=json.dumps({"date": date, "time": time, "location": location}), status="pending")
+        if location.strip().lower() == "online":
+            body = f"Online session proposal: {date}" + (f" at {time}" if time else "")
+            meta = json.dumps({"date": date, "time": time or "Any time", "location": "Online"})
+        else:
+            body = f"Meeting proposal: {date} at {time}, {location}"
+            meta = json.dumps({"date": date, "time": time, "location": location})
+        add_message(connection, request_id, user["id"], "meetup", body, meta=meta, status="pending")
         notify(connection, other_party(item, user["id"]),
-               f"Meeting proposal for \"{item['title']}\": {date} at {time}.", f"/chat/{request_id}", kind="action")
+               f"Meeting proposal for \"{item['title']}\": {date}.", f"/chat/{request_id}", kind="action")
     return redirect_toast(f"/chat/{request_id}", "Meeting proposal sent")
 
 

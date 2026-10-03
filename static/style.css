@@ -891,3 +891,26 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
 
 /* ---------- system messages: left aligned ---------- */
 .chat-messages .chat-system{text-align:left;margin:.2rem 0;max-width:85%}
+
+/* ---------- chat ⋯ menu ---------- */
+.chat-main.card{position:relative}
+.chat-menu{position:absolute;top:.5rem;right:.9rem;z-index:30;margin:0}
+.chat-menu summary{list-style:none;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:1.2rem;font-weight:800;cursor:pointer}
+.chat-menu summary::-webkit-details-marker{display:none}
+.chat-menu summary:hover{background:var(--bg);color:var(--ink)}
+.chat-menu-pop{position:absolute;right:0;top:36px;background:#fff;border:1.5px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:.4rem;min-width:150px;display:flex;flex-direction:column}
+.chat-menu-pop a,.chat-menu-pop button{display:block;width:100%;text-align:left;padding:.5rem .8rem;border-radius:10px;font-size:.85rem;font-weight:600;color:var(--ink);text-decoration:none;background:none;border:0;cursor:pointer;font-family:inherit}
+.chat-menu-pop a:hover,.chat-menu-pop button:hover{background:var(--bg)}
+.ws-context summary{padding-right:3.2rem}
+
+/* ---------- conversation starter chips ---------- */
+.chat-suggest{padding:.6rem 1.2rem 0;display:flex;flex-direction:column;gap:.4rem}
+.chat-suggest-chips{display:flex;gap:.5rem;flex-wrap:wrap}
+.suggest-chip{border:1.5px solid var(--line);background:#fff;border-radius:999px;padding:.4rem .9rem;font-size:.8rem;font-weight:600;color:var(--muted);cursor:pointer;font-family:inherit}
+.suggest-chip:hover{border-color:var(--ink);color:var(--ink)}
+
+/* ---------- bigger checkboxes ---------- */
+.check-row input[type=checkbox]{width:18px !important;height:18px;accent-color:var(--ink);flex-shrink:0;margin:0}
+
+/* ---------- others category ---------- */
+.cat-others{--cat:#e8e6e1}
