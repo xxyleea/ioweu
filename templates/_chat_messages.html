@@ -62,8 +62,7 @@
             {% if m.sender_id != user.id %}
             <div class="bubble-actions">
               <form method="post" action="/settlements/{{ m.id }}/accept"><button class="btn-small btn-primary">Accept</button></form>
-              <button class="btn-small btn-ghost" data-counter-settlement="{{ m.id }}">Counter</button>
-              <form method="post" action="/settlements/{{ m.id }}/decline"><button class="btn-small btn-ghost danger">Decline</button></form>
+              <button class="btn-small btn-ghost btn-grey" data-counter-settlement="{{ m.id }}">Counter</button>
             </div>
             {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
           {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
