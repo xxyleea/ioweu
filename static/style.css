@@ -914,3 +914,6 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
 
 /* ---------- others category ---------- */
 .cat-others{--cat:#e8e6e1}
+
+/* ---------- system notices: centered pills ---------- */
+.chat-messages .chat-system{text-align:center;margin:.2rem auto;max-width:80%}
