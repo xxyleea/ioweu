@@ -52,8 +52,7 @@
   <p class="action-label">{{ hero.label }}</p>
   {% if item.agreed_value and item.status not in ('open','negotiating') %}
   <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits agreed
-    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','mediation','human_review') %}· held safely{% endif %}
-    {% if item.status in ('completed_pending_release','disputed','mediation','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}
+    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','completed_pending_release','disputed','mediation','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}
   </p>
   {% endif %}
   {% if item.status == 'scheduled' %}
@@ -116,7 +115,7 @@
         <b>{{ requester_profile.name.split(' ')[0] }}{{ ' ' ~ requester_profile.name.split(' ')[-1][0] ~ '.' if requester_profile.name.split(' ')|length > 1 else '' }}</b>
         <small class="muted">Reliability {{ requester_profile.reliability }}/100 · ♥ {{ requester_thumbs }} · 📍 {{ item.location or requester_profile.district or 'nearby' }}</small>
       </div>
-      {% if not is_owner %}<form method="post" action="/users/{{ item.requester_id }}/block"><input type="hidden" name="next" value="/requests/{{ item.id }}"><button class="btn-ghost btn-sm danger">Block</button></form>{% endif %}
+
     </div>
     {% endif %}
     {% if item.effort_minutes %}<p class="muted small">⏱ Estimated {{ item.effort_minutes }} minutes{% if item.urgency %} · urgency {{ item.urgency }}{% endif %}</p>{% endif %}
@@ -200,6 +199,22 @@
 </div>
 {% endif %}
 
+{% if item.status in ('confirmed','scheduled') %}
+<div class="modal" id="meetup-modal" hidden>
+  <div class="modal-card">
+    <h2>Propose a meeting</h2>
+    <form method="post" action="/requests/{{ item.id }}/meetup" class="modal-form">
+      <input type="hidden" name="next" value="/requests/{{ item.id }}">
+      <label class="check-row"><input type="checkbox" name="online" value="1" id="meetup-online"> Online — no meetup location needed</label>
+      <label>Date<input type="date" name="date" required></label>
+      <div id="meetup-time-row"><label>Time<input type="time" name="time"></label></div>
+      <div id="meetup-loc-row"><label>Location<input type="text" name="location" id="meetup-loc-input" placeholder="e.g. MTR station exit A" value="{{ item.location if item.location and item.location != 'Online' else '' }}"></label></div>
+      <div class="modal-actions"><button type="button" class="btn-ghost" data-modal-close>Back</button><button class="btn-primary">Send proposal</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if item.status == 'scheduled' and involved %}
 <div class="modal" id="start-task-modal" hidden>
   <div class="modal-card">
@@ -221,6 +236,18 @@ document.querySelectorAll('[data-modal-open]').forEach(b => b.addEventListener('
 document.querySelectorAll('[data-modal-close]').forEach(b => b.addEventListener('click', () => {
   b.closest('.modal').hidden = true;
 }));
+const meetOnline = document.getElementById('meetup-online');
+if (meetOnline) {
+  const timeRow = document.getElementById('meetup-time-row');
+  const locRow = document.getElementById('meetup-loc-row');
+  const locInput = document.getElementById('meetup-loc-input');
+  meetOnline.addEventListener('change', () => {
+    const on = meetOnline.checked;
+    timeRow.hidden = on;
+    locRow.hidden = on;
+    if (on) { locInput.value = 'Online'; } else if (locInput.value === 'Online') { locInput.value = ''; }
+  });
+}
 const modeRadios = document.querySelectorAll('input[name="mode"]');
 function syncOptions() {
   document.querySelectorAll('.offer-option').forEach(o => {

@@ -732,6 +732,9 @@ def recommendation(
     ).fetchall()
     if not rows:
         midpoint, spread = comparable_stats(connection, category.lower())
+        effort_hint = max(2, round(effort_minutes / 15))
+        midpoint = max(effort_hint, min(midpoint, effort_hint * 5))
+        spread = max(1, min(spread, midpoint // 2 or 1))
         return {
             "recommended": midpoint,
             "range": [max(1, midpoint - spread), midpoint + spread],
@@ -750,6 +753,8 @@ def recommendation(
     complexity_factor = max(0.7, min(1.3, 1 + 0.1 * (complexity - 3)))
     quality_factor = max(0.8, min(1.2, 1 + 0.05 * (quality_score - 3)))
     suggested = max(1, round(benchmark * effort_factor * complexity_factor * quality_factor))
+    effort_hint = max(2, round(effort_minutes / 15))
+    suggested = max(effort_hint, min(suggested, effort_hint * 5))
     spread = max(1, round(suggested * (0.2 if len(rows) >= 5 else 0.35)))
     return {
         "recommended": suggested,
@@ -2754,7 +2759,7 @@ def hero_for(item, user_id, offer, meetup, dispute, my_confirm):
             return {"actor": "other", "label": "Meeting proposal sent. Waiting for a response.",
                     "action": {"text": "View Chat", "href": f"/chat/{rid}"}}
         return {"actor": "you", "label": "Credits are in escrow. Schedule the task together.",
-                "action": {"text": "Propose Meetup", "href": f"/chat/{rid}"}}
+                "action": {"text": "Propose Meetup", "modal": "meetup-modal"}}
     if status == "scheduled":
         return {"actor": "you", "label": "Meeting confirmed. Start the task when it's time.",
                 "action": {"text": "Start Task", "modal": "start-task-modal"}}
@@ -2831,11 +2836,12 @@ def make_offer(request: Request, request_id: int, mode: str = Form(...),
         offer_buffer = max(0, offer_buffer)
         if mode != "accept":
             low, high = negotiation_bounds(item, is_owner)
-            if value < low or value > high:
+            if (value < low or value > high) and confirm_outside_range != "1":
                 return render(
                     request,
                     "error.html",
-                    message=f"That offer must be within the current negotiation range of {low}–{high} credits.",
+                    message=f"That offer is outside the current negotiation range of {low}–{high} credits. "
+                            "Go back and use the offer window — tick the confirmation to send it anyway.",
                 )
         old = pending_message(connection, request_id, "offer")
         if old:
