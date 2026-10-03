@@ -10,6 +10,7 @@ env/
 *.secret
 
 # Local runtime data
+.workbuddy/
 
 # IDE and OS files
 .vscode/

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}IoU · Suggested solution{% endblock %}
+{% block title %}IoU · Fair Resolution{% endblock %}
 {% block content %}
 <div class="stack">
 <header class="page-head"><div>
   <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
   <h1 style="margin-top:.8rem">Dispute Resolution</h1>
-  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits held while this is reviewed</p>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits stay held while this is reviewed</p>
 </div></header>
 
 <section class="card">
@@ -14,26 +14,28 @@
   <p>{{ dispute.description }}</p>
   {% set evidence = dispute.evidence_paths|from_json if dispute.evidence_paths else ([dispute.evidence_path] if dispute.evidence_path else []) %}
   {% if evidence %}<p>Evidence:</p><ul>{% for path in evidence %}<li><a href="/uploads/{{ path }}" target="_blank">📎 View evidence {{ loop.index }}</a></li>{% endfor %}</ul>{% endif %}
-  <p class="muted">Requested refund: {{ dispute.requested_refund_amount }} credits</p>
+  <p class="muted">Requested refund: {{ dispute.requested_refund_amount }} credits of {{ item.agreed_value }}</p>
 </section>
 
 <section class="card mediation-suggestion">
-  <h2>⚖️ IoU's suggested solution</h2>
+  <h2>⚖️ IoU Fair Resolution</h2>
   <p class="suggestion-amount">Refund <b>{{ suggestion.amount }}</b> of {{ item.agreed_value }} credits to the requester; the helper keeps {{ item.agreed_value - suggestion.amount }}.</p>
   <p class="muted">{{ suggestion.reason }}</p>
-  {% if my_accept %}
-  <p class="success">You accepted this suggestion. Waiting for the other participant.</p>
+  {% if not can_act %}
+  <p class="stage-note">⏳ You still have until {{ dispute.negotiation_deadline|hkdate }} {{ dispute.negotiation_deadline|hktime }} to settle this together in the chat. IoU's Fair Resolution becomes binding-ready after that, and it is then open for acceptance for one day.</p>
+  {% elif my_accept %}
+  <p class="success">You accepted this Fair Resolution. Waiting for the other participant.</p>
   {% else %}
   <div class="modal-actions">
-    <form method="post" action="/requests/{{ item.id }}/mediation/reject" onsubmit="return confirm('Reject the suggestion? The dispute goes to a community moderator.')">
+    <form method="post" action="/requests/{{ item.id }}/mediation/reject" onsubmit="return confirm('Reject the Fair Resolution? The dispute goes to a community moderator.')">
       <button class="btn-ghost danger">Reject</button>
     </form>
     <form method="post" action="/requests/{{ item.id }}/mediation/accept">
-      <button class="btn-primary">Accept Suggestion</button>
+      <button class="btn-primary">Accept Fair Resolution</button>
     </form>
   </div>
   {% endif %}
-  <p class="muted small">Both participants must accept for the resolution to take effect. If either rejects, a community moderator reviews the case.</p>
+  <p class="muted small">Both participants must accept for the resolution to take effect. If either rejects — or if nobody responds within a day — a community moderator reviews the evidence and decides.</p>
 </section>
 
 <section class="card">

@@ -7,9 +7,12 @@
   <h3>Exchanges</h3>
   {% for t in threads %}
   <a class="ws-thread {% if t.id == item.id %}active{% endif %}" href="/chat/{{ t.id }}">
-    <b>{{ t.title }}</b>
-    <small class="muted">{{ t.requester_name }}{% if t.provider_name %} · {{ t.provider_name }}{% endif %}</small>
-    {% if t.unread_count %}<span class="thread-unread">● {{ t.unread_count }}</span>{% endif %}
+    <span class="thread-av">{{ t.title[0]|upper }}</span>
+    <span class="thread-body">
+      <span class="thread-top"><b>{{ t.title }}</b><small>{{ t.last_at|hktime }}</small></span>
+      <span class="thread-preview">{{ t.last_body or 'No messages yet' }}</span>
+    </span>
+    {% if t.unread_count %}<span class="thread-unread">{{ t.unread_count }}</span>{% endif %}
   </a>
   {% endfor %}
 </aside>
@@ -75,12 +78,17 @@
   {% endif %}
   {% if item.status == 'disputed' %}
   <button class="btn-ghost" data-modal-open="settlement-modal">⚖️ Suggest a resolution</button>
-  <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU for a suggested solution</a>
+  <span class="toolbar-note">No agreement within 3 days → IoU proposes a Fair Resolution.</span>
+  {% elif item.status == 'mediation' %}
+  <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">⚖️ Review IoU's Fair Resolution</a>
+  <span class="toolbar-note">Both participants must accept within 1 day, otherwise a moderator decides.</span>
+  {% elif item.status == 'human_review' %}
+  <span class="toolbar-note">A community moderator is making the final decision. Credits stay frozen.</span>
   {% endif %}
 </div>
 
 <form class="chat-input" method="post" action="/chat/{{ item.id }}">
-  <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status == 'disputed' %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off" required>
+  <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status in ('disputed','mediation') %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off" required>
   <button class="btn-primary">Send</button>
 </form>
 </div>

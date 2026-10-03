@@ -763,3 +763,41 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .news-row p{margin:0;font-size:.88rem}
 .news-dot{width:8px;height:8px;border-radius:50%;background:#7fb069;margin-top:.45rem;flex-shrink:0}
 @media (max-width:1100px){.hub-grid{grid-template-columns:1fr 1fr}.home-2col{grid-template-columns:1fr}}
+
+/* ===== chat v4: Carousell-style conversation ===== */
+.ws-thread{display:flex;align-items:center;gap:.65rem;height:auto;padding:.7rem 1.1rem}
+.thread-av{width:32px;height:32px;border-radius:50%;background:#efe9dd;color:#6b6f75;font-size:.8rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ws-thread.active .thread-av{background:#fff}
+.thread-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:.15rem}
+.thread-top{display:flex;align-items:baseline;justify-content:space-between;gap:.5rem}
+.thread-top b{font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:0}
+.thread-top small{color:var(--muted);font-size:.68rem;flex-shrink:0}
+.thread-preview{font-size:.76rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.thread-unread{position:static;transform:none;top:auto;right:auto;background:#e4572e;color:#fff;border-radius:999px;font-size:.68rem;font-weight:800;padding:.1rem .45rem;margin:0;flex-shrink:0}
+
+.chat-row{display:flex;align-items:flex-end;gap:.45rem}
+.chat-row.mine{justify-content:flex-end}
+.chat-row.grouped{margin-top:-.45rem}
+.chat-av{width:26px;height:26px;border-radius:50%;background:#efe9dd;color:#6b6f75;font-size:.72rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.chat-av.av-special{font-size:.85rem;background:#fff;border:1px solid var(--line)}
+.chat-bubble{max-width:62%;background:#fff;border-radius:18px 18px 18px 6px;padding:.45rem .85rem .3rem;box-shadow:0 2px 8px rgba(35,39,43,.05);line-height:1.45}
+.chat-row.mine .chat-bubble{background:var(--yellow);border-radius:18px 18px 6px 18px}
+.chat-row.grouped .chat-bubble{border-top-left-radius:6px}
+.chat-bubble .chat-text{margin:0;white-space:pre-wrap;word-break:break-word}
+.chat-who{display:block;color:var(--muted);font-size:.7rem;font-weight:700;margin-bottom:.1rem}
+.chat-time{display:block;text-align:right;font-size:.65rem;color:#9aa0a6;margin-top:.1rem}
+.chat-day{display:flex;justify-content:center;margin:.3rem 0}
+.chat-day span{background:rgba(35,39,43,.06);color:var(--muted);font-size:.7rem;font-weight:600;border-radius:999px;padding:.2rem .8rem}
+.chat-empty{text-align:center;color:var(--muted);padding:2.5rem 1rem}
+.chat-empty-badge{font-size:2rem;margin-bottom:.4rem}
+.chat-empty p{margin:.2rem 0}
+.special-bubble{max-width:70%}
+.card-amount{display:block;font-size:1rem}
+.chat-system{margin:.2rem auto;max-width:80%}
+.toolbar-note{align-self:center;font-size:.78rem;color:var(--muted)}
+.stage-note{background:#fff7e0;border-radius:14px;padding:.7rem .9rem;font-size:.85rem;margin:.6rem 0 0}
+.suggestion-amount{font-size:1.05rem}
+
+/* new statuses */
+.s-mediation{background:#e7ddfb}
+.s-cancelled{background:#e8e6e1;color:var(--muted)}

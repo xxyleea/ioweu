@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,7 +25,17 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "ioweu.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
-MIN_BALANCE = -20
+MIN_BALANCE = -5
+# Dispute flow: user-to-user negotiation window, then AI fair-resolution
+# proposal window, then human moderation. Set IOWEU_FAST_DISPUTES=<minutes>
+# to compress the negotiation window for live demos (mediation gets 1/3).
+_FAST_DISPUTES = os.getenv("IOWEU_FAST_DISPUTES")
+DISPUTE_NEGOTIATION_WINDOW = (
+    timedelta(minutes=float(_FAST_DISPUTES)) if _FAST_DISPUTES else timedelta(days=3)
+)
+DISPUTE_MEDIATION_WINDOW = (
+    timedelta(minutes=float(_FAST_DISPUTES) / 3) if _FAST_DISPUTES else timedelta(days=1)
+)
 TASK_CATEGORIES = (
     "daily life",
     "education",
@@ -67,12 +77,26 @@ app = FastAPI(title="IoU")
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("IOWEU_SESSION_SECRET", "demo-only-change-me"),
+    # Never fall back to a static secret: sessions would be forgeable.
+    secret_key=os.getenv("IOWEU_SESSION_SECRET") or secrets.token_urlsafe(32),
     max_age=60 * 60 * 24 * 14,
 )
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 templates.env.filters["slug"] = lambda value: value.replace("&", "and").replace(" ", "-")
 templates.env.filters["from_json"] = lambda value: json.loads(value) if value else []
+
+
+def _hk(dt_like: str, fmt: str) -> str:
+    """Render a stored UTC timestamp in Hong Kong local time."""
+    try:
+        parsed = datetime.fromisoformat(dt_like)
+        return parsed.astimezone(timezone(timedelta(hours=8))).strftime(fmt)
+    except (TypeError, ValueError):
+        return dt_like or ""
+
+
+templates.env.filters["hktime"] = lambda value: _hk(value, "%H:%M")
+templates.env.filters["hkdate"] = lambda value: _hk(value, "%d %b %Y")
 
 
 def now() -> str:
@@ -280,13 +304,15 @@ def init_db() -> None:
                 connection.execute(f"ALTER TABLE messages ADD COLUMN {column} {definition}")
         dispute_cols = {row["name"] for row in connection.execute("PRAGMA table_info(disputes)")}
         for column, definition in (
-            ("reason", "TEXT"), ("desired_outcome", "TEXT"),
-            ("requester_accepted", "INTEGER NOT NULL DEFAULT 0"),
-            ("provider_accepted", "INTEGER NOT NULL DEFAULT 0"),
-            ("review_since", "TEXT"),
+                ("reason", "TEXT"), ("desired_outcome", "TEXT"),
+                ("requester_accepted", "INTEGER NOT NULL DEFAULT 0"),
+                ("provider_accepted", "INTEGER NOT NULL DEFAULT 0"),
+                ("review_since", "TEXT"),
+                ("negotiation_deadline", "TEXT"),
+                ("mediation_deadline", "TEXT"),
         ):
-            if column not in dispute_cols:
-                connection.execute(f"ALTER TABLE disputes ADD COLUMN {column} {definition}")
+                if column not in dispute_cols:
+                    connection.execute(f"ALTER TABLE disputes ADD COLUMN {column} {definition}")
         if "negotiation_deadline" not in columns:
             connection.execute("ALTER TABLE requests ADD COLUMN negotiation_deadline TEXT")
         for column in ("effort_minutes", "complexity", "quality_score"):
@@ -327,9 +353,9 @@ def init_db() -> None:
             )
         if connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
             users = [
-                ("Alex Resident", "alex@example.com", "demo123", 0, 0),
-                ("Sam Resident", "sam@example.com", "demo123", 0, 0),
-                ("Morgan Moderator", "moderator@example.com", "demo123", 0, 1),
+                ("Alex Resident", "alex@example.com", "demo123", 10, 0),
+                ("Sam Resident", "sam@example.com", "demo123", 10, 0),
+                ("Morgan Moderator", "moderator@example.com", "demo123", 10, 1),
             ]
             connection.executemany(
                 "INSERT INTO users(name,email,password,balance,is_moderator) VALUES (?,?,?,?,?)",
@@ -342,9 +368,6 @@ def current_user(request: Request) -> sqlite3.Row | None:
     if not user_id:
         return None
     with db() as connection:
-        release_due_payments(connection)
-        expire_chain_proposals(connection)
-        ensure_chain_invitations(connection)
         return connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
 
@@ -452,7 +475,6 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
     context.setdefault("stage_map", STAGE_MAP)
     if user and "unread_msgs" not in context:
         with db() as connection:
-            auto_resolve_reviews(connection)
             context["unread_msgs"] = unread_message_count(connection, user["id"])
             context["unread_notifs"] = connection.execute(
                 "SELECT COUNT(*) c FROM notifications WHERE user_id=? AND is_read=0",
@@ -461,14 +483,28 @@ def render(request: Request, template: str, **context: Any) -> HTMLResponse:
 
 
 def expire_negotiations(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """UPDATE requests
-           SET status='open', provider_id=NULL, provider_value=NULL,
-               provider_buffer=NULL, negotiation_deadline=NULL
+    expired = connection.execute(
+        """SELECT id, title, requester_id, provider_id FROM requests
            WHERE status='negotiating' AND negotiation_deadline IS NOT NULL
              AND negotiation_deadline <= ?""",
         (now(),),
-    )
+    ).fetchall()
+    for item in expired:
+        connection.execute(
+            """UPDATE requests
+               SET status='open', provider_id=NULL, provider_value=NULL,
+                   provider_buffer=NULL, negotiation_deadline=NULL
+               WHERE id=?""",
+            (item["id"],),
+        )
+        add_message(
+            connection, item["id"], None, "system",
+            "The negotiation window closed. The request is open on the board again.",
+        )
+        for user_id in (item["requester_id"], item["provider_id"]):
+            notify(connection, user_id,
+                   f"The negotiation window closed for \"{item['title']}\" — the request is open again.",
+                   f"/requests/{item['id']}", kind="info")
 
 
 def ledger_entry(connection: sqlite3.Connection, user_id: int, request_id: int | None,
@@ -673,8 +709,10 @@ STATUS_LABELS = {
     "completed_pending_release": "Dispute Window",
     "completed": "Completed",
     "disputed": "Disputed",
+    "mediation": "Fair Resolution",
     "human_review": "Human Review",
     "resolved": "Resolved",
+    "cancelled": "Cancelled",
 }
 
 TIMELINE_STEPS = [
@@ -689,13 +727,14 @@ STAGE_MAP = {
     "confirmed": 1, "scheduled": 1,
     "in_progress": 2,
     "completion_submitted": 3, "completed_pending_release": 3, "completed": 3, "resolved": 3,
-    "disputed": 4, "human_review": 4,
+    "disputed": 4, "mediation": 4, "human_review": 4, "cancelled": 0,
 }
 
 STATUS_STEP = {
     "open": 0, "negotiating": 1, "agreement_pending": 2, "confirmed": 4,
     "scheduled": 5, "in_progress": 6, "completion_submitted": 7,
-    "completed": 10, "disputed": 7, "human_review": 7, "resolved": 10,
+    "completed": 9, "disputed": 7, "mediation": 8, "human_review": 8,
+    "resolved": 9, "cancelled": 0,
 }
 
 
@@ -737,36 +776,73 @@ def unread_message_count(connection: sqlite3.Connection, user_id: int) -> int:
     ).fetchone()["c"]
 
 
-def auto_resolve_reviews(connection: sqlite3.Connection) -> None:
-    """Demo: human moderator review resolves itself ~3 seconds after escalation."""
-    import random
-    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=3)).isoformat(timespec="seconds")
-    rows = connection.execute(
-        """SELECT d.*, r.id rid FROM disputes d JOIN requests r ON r.id=d.request_id
-           WHERE r.status='human_review' AND d.status='open'
-             AND d.review_since IS NOT NULL AND d.review_since <= ?""",
-        (cutoff,),
+def notify_moderators(connection: sqlite3.Connection, body: str, link: str) -> None:
+    for moderator in connection.execute("SELECT id FROM users WHERE is_moderator=1").fetchall():
+        notify(connection, moderator["id"], body, link, kind="action")
+
+
+def advance_disputes(connection: sqlite3.Connection) -> None:
+    """Move disputes through timed stages.
+
+    disputed (3-day user negotiation) -> mediation (AI fair resolution,
+    1-day window) -> human_review (community moderator decides).
+    """
+    current = now()
+    to_mediation = connection.execute(
+        """SELECT d.id, d.request_id, r.title, r.requester_id, r.provider_id
+           FROM disputes d JOIN requests r ON r.id=d.request_id
+           WHERE d.status='open' AND d.negotiation_deadline IS NOT NULL
+             AND d.negotiation_deadline <= ? AND r.status='disputed'""",
+        (current,),
     ).fetchall()
-    for dispute in rows:
-        item = connection.execute(
-            "SELECT * FROM requests WHERE id=?", (dispute["rid"],)).fetchone()
-        approved = random.random() < 0.5
-        refund = dispute["requested_refund_amount"] if approved else 0
-        decision = "approve" if approved else "deny"
-        already_settled = connection.execute(
-            "SELECT 1 FROM transactions WHERE request_id=?", (dispute["rid"],)).fetchone()
-        if not already_settled:
-            settle_exchange(connection, item, refund, f"Moderator decision ({decision}) for dispute #{dispute['id']}")
+    for row in to_mediation:
+        mediation_deadline = (
+            datetime.now(timezone.utc) + DISPUTE_MEDIATION_WINDOW
+        ).isoformat(timespec="seconds")
         connection.execute(
-            "UPDATE disputes SET status='resolved', moderator_decision=?, negotiation_status='resolved', resolved_at=? WHERE id=?",
-            (decision, now(), dispute["id"]))
-        connection.execute("UPDATE requests SET status='resolved', completed_at=? WHERE id=?",
-                           (now(), dispute["rid"]))
-        outcome = f"approved a {refund} credit refund" if approved else "rejected the refund request"
-        add_message(connection, dispute["rid"], None, "system",
-                    f"A community moderator reviewed this dispute and {outcome}.")
-        notify(connection, item["requester_id"], f"Your dispute was reviewed — {outcome}.", f"/requests/{dispute['rid']}", kind="success")
-        notify(connection, item["provider_id"], f"Your dispute was reviewed — {outcome}.", f"/requests/{dispute['rid']}", kind="success")
+            "UPDATE disputes SET negotiation_status='mediation', mediation_deadline=? WHERE id=?",
+            (mediation_deadline, row["id"]),
+        )
+        connection.execute(
+            "UPDATE requests SET status='mediation' WHERE id=?", (row["request_id"],))
+        add_message(
+            connection, row["request_id"], None, "system",
+            "The three-day resolution window closed without agreement. "
+            "IoU has prepared a Fair Resolution proposal for both participants.",
+        )
+        for user_id in (row["requester_id"], row["provider_id"]):
+            notify(connection, user_id,
+                   f"IoU proposed a Fair Resolution for \"{row['title']}\" — review it within one day.",
+                   f"/requests/{row['request_id']}/mediation", kind="action")
+    to_human = connection.execute(
+        """SELECT d.id, d.request_id, r.title, r.requester_id, r.provider_id
+           FROM disputes d JOIN requests r ON r.id=d.request_id
+           WHERE d.status='open' AND d.negotiation_status='mediation'
+             AND d.mediation_deadline IS NOT NULL
+             AND d.mediation_deadline <= ? AND r.status='mediation'""",
+        (current,),
+    ).fetchall()
+    for row in to_human:
+        connection.execute(
+            "UPDATE requests SET status='human_review' WHERE id=?", (row["request_id"],))
+        connection.execute(
+            "UPDATE disputes SET negotiation_status='human_review', review_since=? WHERE id=?",
+            (current, row["id"]),
+        )
+        add_message(
+            connection, row["request_id"], None, "system",
+            "The Fair Resolution was not accepted by both participants. "
+            "A community moderator will now make the final decision.",
+        )
+        for user_id in (row["requester_id"], row["provider_id"]):
+            notify(connection, user_id,
+                   f"\"{row['title']}\" was escalated to a community moderator.",
+                   f"/requests/{row['request_id']}", kind="info")
+        notify_moderators(
+            connection,
+            f"A dispute for \"{row['title']}\" needs your final decision.",
+            f"/disputes/{row['id']}/review",
+        )
 
 
 def redirect_toast(path: str, message: str) -> RedirectResponse:
@@ -798,8 +874,12 @@ def _release_worker() -> None:
             with db() as connection:
                 release_due_payments(connection)
                 create_deadline_reminders(connection)
+                expire_negotiations(connection)
+                expire_chain_proposals(connection)
+                ensure_chain_invitations(connection)
+                advance_disputes(connection)
         except sqlite3.Error:
-            logger.exception("Automatic escrow release failed")
+            logger.exception("Background maintenance failed")
         time.sleep(30)
 
 
@@ -927,7 +1007,7 @@ def home(request: Request):
         active_items = [
             item for item in requests
             if (item["requester_id"] == user["id"] or item["provider_id"] == user["id"])
-            and item["status"] not in ("completed", "resolved")
+            and item["status"] not in ("completed", "resolved", "cancelled")
         ]
         active_items.sort(key=lambda i: i["id"] not in pinned_ids)
         exchanges = []
@@ -941,7 +1021,8 @@ def home(request: Request):
         action_count = sum(1 for e in exchanges if e["needs"])
         user_skills = [x for x in (user["skills"] or "").split(",") if x]
         matched_genres = {g for g, subs in SKILL_TREE.items() if any(x in subs for x in user_skills)}
-        open_others = [i for i in requests if i["requester_id"] != user["id"] and i["provider_id"] is None]
+        open_others = [i for i in requests if i["requester_id"] != user["id"]
+                       and i["provider_id"] is None and i["status"] == "open"]
         user_district = (user["district"] or "").strip().lower()
         open_others.sort(key=lambda i: (
             i["category"] not in matched_genres,
@@ -950,8 +1031,8 @@ def home(request: Request):
         recommended_tasks = open_others[:6]
         matched_ids = {i["id"] for i in open_others if i["category"] in matched_genres}
         counts = {
-            "my_open": sum(1 for i in requests if i["requester_id"] == user["id"] and i["status"] not in ("completed", "resolved")),
-            "helping": sum(1 for i in requests if i["provider_id"] == user["id"] and i["status"] not in ("completed", "resolved")),
+            "my_open": sum(1 for i in requests if i["requester_id"] == user["id"] and i["status"] not in ("completed", "resolved", "cancelled")),
+            "helping": sum(1 for i in requests if i["provider_id"] == user["id"] and i["status"] not in ("completed", "resolved", "cancelled")),
         }
         activity = connection.execute(
             """SELECT t.created_at, t.value agreed_value, t.kudos_bonus, r.title,
@@ -960,7 +1041,8 @@ def home(request: Request):
                JOIN users ru ON ru.id=t.requester_id JOIN users pu ON pu.id=t.provider_id
                ORDER BY t.created_at DESC LIMIT 6""").fetchall()
         history = load_history(connection, user["id"])
-        disputes = load_disputes(connection)
+        # Only unresolved disputes belong in the moderator queue.
+        disputes = [d for d in load_disputes(connection) if d["status"] == "open"]
         ledger = connection.execute(
             """SELECT l.*, r.title FROM ledger l LEFT JOIN requests r ON r.id=l.request_id
                WHERE l.user_id=? ORDER BY l.created_at DESC""", (user["id"],)
@@ -1250,7 +1332,8 @@ def my_posts(request: Request):
         mine = [item for item in requests if item["requester_id"] == user["id"]]
         mine.sort(key=lambda i: i["id"] not in pinned_ids)
         my_open = [item for item in mine if item["status"] == "open"]
-        my_active = [item for item in mine if item["status"] not in ("completed", "resolved", "open")]
+        my_active = [item for item in mine if item["status"] not in ("completed", "resolved", "open", "cancelled")]
+        my_cancelled = [item for item in mine if item["status"] == "cancelled"]
         my_completed = [item for item in mine if item["status"] in ("completed", "resolved")]
         history = load_history(connection, user["id"])
         disputes = load_disputes(connection)
@@ -1260,6 +1343,7 @@ def my_posts(request: Request):
         page="posts",
         my_open=my_open,
         my_active=my_active,
+        my_cancelled=my_cancelled,
         my_completed=my_completed,
         history=history,
         disputes=disputes,
@@ -1283,7 +1367,7 @@ def helping(request: Request):
             if item["provider_id"] == user["id"] and item["requester_id"] != user["id"]
         ]
         joined.sort(key=lambda i: i["id"] not in pinned_ids)
-        helping_active = [item for item in joined if item["status"] not in ("completed", "resolved")]
+        helping_active = [item for item in joined if item["status"] not in ("completed", "resolved", "cancelled")]
         helping_done = [item for item in joined if item["status"] in ("completed", "resolved")]
         history = load_history(connection, user["id"])
         disputes = load_disputes(connection)
@@ -1311,6 +1395,7 @@ def browse(request: Request):
         community_requests = [
             item for item in requests
             if item["requester_id"] != user["id"] and item["provider_id"] is None
+            and item["status"] == "open"
         ]
         history = load_history(connection, user["id"])
     user_skills = [s for s in (user["skills"] or "").split(",") if s]
@@ -1401,8 +1486,14 @@ def register(
             ledger_entry(connection, user_id, None, "welcome_credit", 10,
                          "Welcome credits for joining the community")
         except sqlite3.IntegrityError:
-            user_id = connection.execute(
-                "SELECT id FROM users WHERE email=?", (email,)).fetchone()["id"]
+            # Never sign the visitor into an existing account: that would let
+            # anyone take over a registered email.
+            return render(
+                request,
+                "register.html",
+                error="That email is already registered. Please log in instead.",
+                skill_tree=SKILL_TREE, genre_emoji=GENRE_EMOJI, hk_regions=HK_REGIONS,
+            )
     request.session["user_id"] = user_id
     return RedirectResponse("/welcome", status_code=303)
 
@@ -1569,6 +1660,7 @@ def chat_page(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         expire_negotiations(connection)
+        advance_disputes(connection)
         item = load_request(connection, request_id)
         is_participant = connection.execute(
             "SELECT 1 FROM request_participants WHERE request_id=? AND user_id=?",
@@ -1605,6 +1697,10 @@ def chat_page(request: Request, request_id: int):
         threads = connection.execute(
             """SELECT r.id, r.title, r.status,
                       u.name requester_name, p.name provider_name,
+                      (SELECT body FROM messages m WHERE m.request_id=r.id
+                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_body,
+                      (SELECT created_at FROM messages m WHERE m.request_id=r.id
+                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_at,
                       (SELECT COUNT(*) FROM messages m
                         LEFT JOIN thread_reads tr ON tr.request_id=m.request_id AND tr.user_id=?
                         WHERE m.request_id=r.id AND m.sender_id IS NOT NULL AND m.sender_id != ?
@@ -1615,8 +1711,7 @@ def chat_page(request: Request, request_id: int):
                       OR EXISTS (SELECT 1 FROM request_participants rp
                                  WHERE rp.request_id=r.id AND rp.user_id=?))
                  AND EXISTS (SELECT 1 FROM messages m WHERE m.request_id=r.id)
-               ORDER BY (SELECT created_at FROM messages m WHERE m.request_id=r.id
-                         ORDER BY m.created_at DESC, m.id DESC LIMIT 1) DESC""",
+               ORDER BY last_at DESC""",
             (user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()
     return render(request, "chat.html", page="messages", item=item, messages=messages,
@@ -1634,7 +1729,6 @@ def chat_feed(request: Request, request_id: int):
     if not user:
         return HTMLResponse("", status_code=401)
     with db() as connection:
-        auto_resolve_reviews(connection)
         item = load_request(connection, request_id)
         participant = connection.execute(
             "SELECT 1 FROM request_participants WHERE request_id=? AND user_id=?",
@@ -1704,11 +1798,15 @@ def create_request(
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    if user["balance"] < MIN_BALANCE:
+    if user["balance"] <= 0:
         return render(
             request,
             "error.html",
-            message=f"Your available balance is {user['balance']} credits. You must be at or above {MIN_BALANCE} credits to post a new request.",
+            message=(
+                f"Your available balance is {user['balance']} credits. "
+                "You need a positive balance to post a new request — help a neighbour "
+                "to earn credits back first."
+            ),
         )
     category = category.strip().lower()
     if category not in TASK_CATEGORIES:
@@ -1813,6 +1911,7 @@ def request_detail(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         expire_negotiations(connection)
+        advance_disputes(connection)
         item = load_request(connection, request_id)
         if not item:
             return render(request, "error.html", message="That request does not exist.")
@@ -1919,13 +2018,21 @@ def hero_for(item, user_id, offer, meetup, dispute, my_confirm):
         return waiting
     if status == "disputed":
         if involved:
-            return {"actor": "you", "label": "Dispute in progress. Credits are frozen — settle together or ask IoU to mediate.",
-                    "action": {"text": "Resolve Dispute", "href": f"/chat/{rid}"}}
+            return {"actor": "you", "label": "Dispute in progress. Credits are frozen — settle together or wait for IoU's Fair Resolution.",
+                    "action": {"text": "Resolve in Chat", "href": f"/chat/{rid}"}}
+        return waiting
+    if status == "mediation":
+        if involved:
+            return {"actor": "you", "label": "IoU proposed a Fair Resolution — both participants have one day to accept it.",
+                    "action": {"text": "Review Fair Resolution", "href": f"/requests/{rid}/mediation"}}
         return waiting
     if status == "human_review":
         return {"actor": "other", "label": "A community moderator is reviewing this dispute.", "action": None}
     if status in ("completed", "resolved"):
-        return {"actor": "none", "label": "This exchange is complete. You can still give Kudos or raise a dispute within 3 days.", "action": None}
+        window = item["dispute_window_days"] or 3
+        return {"actor": "none", "label": f"This exchange is complete. You can still give Kudos or raise a dispute within {window} day(s).", "action": None}
+    if status == "cancelled":
+        return {"actor": "none", "label": "This request was cancelled by the requester.", "action": None}
     return waiting
 
 
@@ -2214,6 +2321,11 @@ async def complete_submit(request: Request, request_id: int, note: str = Form(""
         return render(request, "error.html", message="Please tick the confirmation checkbox before submitting.")
     paths = []
     with db() as connection:
+        # Validate the exchange first: screening records the file digest, so a
+        # rejected submit would otherwise burn the file and orphan it on disk.
+        item = load_request(connection, request_id)
+        if not item or item["provider_id"] != user["id"] or item["status"] != "in_progress":
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
         for upload in evidence[:3]:
             if not upload or not upload.filename:
                 continue
@@ -2226,16 +2338,12 @@ async def complete_submit(request: Request, request_id: int, note: str = Form(""
                 return render(request, "error.html", message=str(error))
             (UPLOAD_DIR / filename).write_bytes(data)
             paths.append(filename)
-    if not paths:
-        return render(
-            request,
-            "error.html",
-            message="Please attach at least one completion evidence file (PNG, JPG, PDF, or TXT, up to 5MB).",
-        )
-    with db() as connection:
-        item = load_request(connection, request_id)
-        if not item or item["provider_id"] != user["id"] or item["status"] != "in_progress":
-            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        if not paths:
+            return render(
+                request,
+                "error.html",
+                message="Please attach at least one completion evidence file (PNG, JPG, PDF, or TXT, up to 5MB).",
+            )
         connection.execute(
             "UPDATE requests SET status='completion_submitted', completion_note=?, completion_evidence=? WHERE id=?",
             (note.strip(), json.dumps(paths), request_id))
@@ -2312,46 +2420,38 @@ async def dispute_submit(request: Request, request_id: int, reason: str = Form(.
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
-    paths = []
-    for upload in evidence[:5]:
-        if upload.filename:
-            data = await upload.read()
-            try:
-                with db() as connection:
-                    path = screen_evidence(upload.filename, upload.content_type, data, connection)
-                (UPLOAD_DIR / path).write_bytes(data)
-                paths.append(path)
-            except ValueError as error:
-                return render(request, "error.html", message=str(error))
-    if not paths:
-        return render(request, "error.html",
-                      message="Please attach evidence (png, jpg, pdf or txt, up to 5MB) to open a dispute.")
     with db() as connection:
         item = load_request(connection, request_id)
         if not item or item["requester_id"] != user["id"] or item["status"] != "completion_submitted":
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        paths = []
+        for upload in evidence[:5]:
+            if upload.filename:
+                data = await upload.read()
+                try:
+                    path = screen_evidence(upload.filename, upload.content_type, data, connection)
+                except ValueError as error:
+                    return render(request, "error.html", message=str(error))
+                (UPLOAD_DIR / path).write_bytes(data)
+                paths.append(path)
+        if not paths:
+            return render(request, "error.html",
+                          message="Please attach evidence (png, jpg, pdf or txt, up to 5MB) to open a dispute.")
         refund = max(0, min(refund_amount, item["agreed_value"]))
         if desired_outcome == "full":
             refund = item["agreed_value"]
         midpoint, spread = comparable_stats(connection, item["category"])
-        message_count = connection.execute(
-            "SELECT COUNT(*) FROM messages WHERE request_id=? AND kind IN ('chat','text')",
-            (item["id"],),
-        ).fetchone()[0]
-        prior_disputes = connection.execute(
-            """SELECT COUNT(*) FROM disputes d JOIN requests r ON r.id=d.request_id
-               WHERE d.status IN ('resolved','closed') AND r.category=?""",
-            (item["category"],),
-        ).fetchone()[0]
-        evidence_count = len(json.loads(dispute["evidence_paths"] or "[]")) if dispute["evidence_paths"] else 1
         rec_text = f"Agreed value {item['agreed_value']} credits; recent band {midpoint - spread}-{midpoint + spread}."
+        negotiation_deadline = (
+            datetime.now(timezone.utc) + DISPUTE_NEGOTIATION_WINDOW
+        ).isoformat(timespec="seconds")
         connection.execute(
             """INSERT OR REPLACE INTO disputes(
                request_id,opened_by,description,evidence_path,evidence_paths,recommendation,
-               requested_refund_amount,reason,desired_outcome,negotiation_status)
-               VALUES (?,?,?,?,?,?,?,?,?,'open')""",
+               requested_refund_amount,reason,desired_outcome,negotiation_status,negotiation_deadline)
+               VALUES (?,?,?,?,?,?,?,?,?,'open',?)""",
             (request_id, user["id"], description.strip(), paths[0], json.dumps(paths), rec_text,
-             refund, reason, desired_outcome),
+             refund, reason, desired_outcome, negotiation_deadline),
         )
         connection.execute("UPDATE requests SET status='disputed' WHERE id=?", (request_id,))
         add_message(connection, request_id, None, "system",
@@ -2483,8 +2583,9 @@ def mediation_page(request: Request, request_id: int):
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
+        advance_disputes(connection)
         item = load_request(connection, request_id)
-        if not item or item["status"] != "disputed":
+        if not item or item["status"] not in ("disputed", "mediation"):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
         if user["id"] not in (item["requester_id"], item["provider_id"] or 0):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
@@ -2497,7 +2598,8 @@ def mediation_page(request: Request, request_id: int):
     my_accept = (user["id"] == item["requester_id"] and dispute["requester_accepted"]) or \
                 (user["id"] == item["provider_id"] and dispute["provider_accepted"])
     return render(request, "mediation.html", item=item, dispute=dispute,
-                  suggestion=suggestion, messages=messages, my_accept=my_accept)
+                  suggestion=suggestion, messages=messages, my_accept=my_accept,
+                  can_act=item["status"] == "mediation")
 
 
 @app.post("/requests/{request_id}/mediation/accept")
@@ -2507,7 +2609,9 @@ def mediation_accept(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = load_request(connection, request_id)
-        if not item or item["status"] != "disputed":
+        if not item or item["status"] != "mediation":
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        if user["id"] not in (item["requester_id"], item["provider_id"] or 0):
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
         dispute = connection.execute(
             "SELECT * FROM disputes WHERE request_id=?", (request_id,)).fetchone()
@@ -2523,12 +2627,12 @@ def mediation_accept(request: Request, request_id: int):
                 "UPDATE disputes SET status='resolved', negotiation_status='resolved', moderator_decision='mediated', resolved_at=? WHERE id=?",
                 (now(), dispute["id"]))
             add_message(connection, request_id, None, "system",
-                        f"Both participants accepted the suggested resolution ({suggestion['amount']} credits refunded).")
+                        f"Both participants accepted the Fair Resolution ({suggestion['amount']} credits refunded).")
             notify(connection, other_party(item, user["id"]),
-                   "Your dispute has been resolved via mediation.", f"/requests/{request_id}", kind="success")
+                   "Your dispute has been resolved via the Fair Resolution.", f"/requests/{request_id}", kind="success")
         else:
             notify(connection, other_party(item, user["id"]),
-                   "A mediation resolution is waiting for your response.", f"/requests/{request_id}/mediation", kind="action")
+                   "A Fair Resolution is waiting for your response.", f"/requests/{request_id}/mediation", kind="action")
     return RedirectResponse(f"/requests/{request_id}/mediation", status_code=303)
 
 
@@ -2539,12 +2643,18 @@ def mediation_reject(request: Request, request_id: int):
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = load_request(connection, request_id)
-        if item and item["status"] == "disputed" and user["id"] in (item["requester_id"], item["provider_id"] or 0):
+        if item and item["status"] == "mediation" and user["id"] in (item["requester_id"], item["provider_id"] or 0):
             connection.execute("UPDATE requests SET status='human_review' WHERE id=?", (request_id,))
             connection.execute("UPDATE disputes SET negotiation_status='human_review', review_since=? WHERE request_id=?",
                                (now(), request_id))
             add_message(connection, request_id, None, "system",
-                        "This dispute was escalated to a community moderator.")
+                        "The Fair Resolution was rejected. A community moderator will make the final decision.")
+            dispute = connection.execute(
+                "SELECT id FROM disputes WHERE request_id=?", (request_id,)).fetchone()
+            if dispute:
+                notify_moderators(connection,
+                                  f"A dispute needs your final decision.",
+                                  f"/disputes/{dispute['id']}/review")
     return RedirectResponse(f"/requests/{request_id}", status_code=303)
 
 
@@ -2643,8 +2753,9 @@ def decide_dispute(request: Request, dispute_id: int, decision: str = Form(...))
                     kind="action",
                 )
                 return RedirectResponse("/", status_code=303)
-            refund = {"deny": 0, "partial": dispute["requested_refund_amount"] // 2,
-                      "full": dispute["requested_refund_amount"]}.get(decision, 0)
+            requested = dispute["requested_refund_amount"] or dispute["agreed_value"]
+            refund = {"deny": 0, "partial": max(1, requested // 2),
+                      "full": requested}.get(decision, 0)
             item = load_request(connection, dispute["rid"])
             already_settled = connection.execute(
                 "SELECT 1 FROM transactions WHERE request_id=?", (dispute["rid"],)).fetchone()
@@ -2730,7 +2841,12 @@ def cancel_request(request: Request, request_id: int):
     with db() as connection:
         item = load_request(connection, request_id)
         if item and item["requester_id"] == user["id"] and item["status"] == "open":
-            connection.execute("DELETE FROM requests WHERE id=?", (request_id,))
+            # Soft-cancel: messages/participants reference this request, and
+            # deleting the row would violate their foreign keys.
+            connection.execute(
+                "UPDATE requests SET status='cancelled' WHERE id=?", (request_id,))
+            add_message(connection, request_id, None, "system",
+                        "The requester cancelled this task.")
     return RedirectResponse("/my-posts", status_code=303)
 
 
@@ -2759,6 +2875,9 @@ def estimate(
     complexity: int | None = None,
     quality_score: int = 3,
 ):
+    user = current_user(request)
+    if not user:
+        return JSONResponse({"error": "Sign in to use the credit estimator."}, status_code=401)
     if effort_minutes is None or complexity is None:
         effort_minutes, complexity = infer_task_attributes(title, description, category)
     with db() as connection:

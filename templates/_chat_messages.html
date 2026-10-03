@@ -1,12 +1,21 @@
+{% set ns = namespace(day='', sender=None) %}
   {% for m in messages %}
+    {% set day = m.created_at|hkdate %}
+    {% if day != ns.day %}
+      <div class="chat-day"><span>{{ day }}</span></div>
+      {% set ns.day = day %}
+      {% set ns.sender = None %}
+    {% endif %}
     {% if m.kind == 'system' %}
       <p class="chat-system">{{ m.body }}</p>
+      {% set ns.sender = None %}
     {% elif m.kind == 'offer' %}
       {% set meta = m.meta | from_json %}
       <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-av av-special">💰</div>
         <div class="chat-bubble special-bubble offer-bubble state-{{ m.status or 'done' }}">
-          <small>{{ m.sender_name }}</small>
-          <b>💰 {{ meta.amount }} credits</b>
+          <small class="chat-who">{{ m.sender_name }}</small>
+          <b class="card-amount">{{ meta.amount }} credits</b>
           {% if meta.note %}<p class="offer-note">"{{ meta.note }}"</p>{% endif %}
           {% if rec %}<small class="ref-line">✨ reference {{ rec.range[0] }}–{{ rec.range[1] }}</small>{% endif %}
           {% if m.status == 'pending' %}
@@ -18,14 +27,17 @@
             </div>
             {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
           {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
+          <span class="chat-time">{{ m.created_at|hktime }}</span>
         </div>
       </div>
+      {% set ns.sender = None %}
     {% elif m.kind == 'meetup' %}
       {% set meta = m.meta | from_json %}
       <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-av av-special">📅</div>
         <div class="chat-bubble special-bubble meetup-bubble state-{{ m.status or 'done' }}">
-          <small>{{ m.sender_name }}</small>
-          <b>📅 {{ meta.date }} at {{ meta.time }}</b>
+          <small class="chat-who">{{ m.sender_name }}</small>
+          <b class="card-amount">{{ meta.date }} · {{ meta.time }}</b>
           <p>📍 {{ meta.location }}</p>
           {% if m.status == 'pending' %}
             {% if m.sender_id != user.id %}
@@ -35,14 +47,17 @@
             </div>
             {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
           {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
+          <span class="chat-time">{{ m.created_at|hktime }}</span>
         </div>
       </div>
+      {% set ns.sender = None %}
     {% elif m.kind == 'settlement' %}
       {% set meta = m.meta | from_json %}
       <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
+        <div class="chat-av av-special">⚖️</div>
         <div class="chat-bubble special-bubble settlement-bubble state-{{ m.status or 'done' }}">
-          <small>{{ m.sender_name }}</small>
-          <b>⚖️ Refund {{ meta.amount }} credits</b>
+          <small class="chat-who">{{ m.sender_name }}</small>
+          <b class="card-amount">Refund {{ meta.amount }} credits</b>
           {% if meta.reason %}<p>{{ meta.reason }}</p>{% endif %}
           {% if m.status == 'pending' %}
             {% if m.sender_id != user.id %}
@@ -53,13 +68,28 @@
             </div>
             {% else %}<span class="bubble-state">Waiting for a response…</span>{% endif %}
           {% elif m.status %}<span class="bubble-state">{{ m.status }}</span>{% endif %}
+          <span class="chat-time">{{ m.created_at|hktime }}</span>
         </div>
       </div>
+      {% set ns.sender = None %}
     {% else %}
-      <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
-        <div class="chat-bubble"><small>{{ m.sender_name }}</small>{{ m.body }}</div>
+      {% set mine = m.sender_id == user.id %}
+      <div class="chat-row {% if mine %}mine{% endif %}{% if m.sender_id == ns.sender %} grouped{% endif %}">
+        {% if not mine %}
+          <div class="chat-av">{{ m.sender_name[0]|upper if m.sender_name else '?' }}</div>
+        {% endif %}
+        <div class="chat-bubble">
+          {% if m.sender_id != ns.sender %}<small class="chat-who">{{ m.sender_name or 'Neighbour' }}</small>{% endif %}
+          <p class="chat-text">{{ m.body }}</p>
+          <span class="chat-time">{{ m.created_at|hktime }}</span>
+        </div>
       </div>
+      {% set ns.sender = m.sender_id %}
     {% endif %}
   {% else %}
-    <p class="empty">No messages yet — say hi and arrange the details.</p>
+    <div class="chat-empty">
+      <div class="chat-empty-badge">👋</div>
+      <p><b>No messages yet</b></p>
+      <p class="muted">Say hello, confirm the details and agree the credits here.</p>
+    </div>
   {% endfor %}

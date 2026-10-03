@@ -18,12 +18,14 @@
   <button class="tab" data-tab="open">Waiting for helper</button>
   <button class="tab" data-tab="active">In progress</button>
   <button class="tab" data-tab="done">Completed</button>
+  <button class="tab" data-tab="cancelled">Cancelled</button>
 </div>
 
 <div class="card-list" id="post-list">
   {% for item in my_open %}<div class="post-item" data-group="open">{% include "manage_card.html" %}</div>{% endfor %}
   {% for item in my_active %}<div class="post-item" data-group="active">{% include "manage_card.html" %}</div>{% endfor %}
   {% for item in my_completed %}<div class="post-item" data-group="done">{% include "manage_card.html" %}</div>{% endfor %}
+  {% for item in my_cancelled %}<div class="post-item" data-group="cancelled">{% include "manage_card.html" %}</div>{% endfor %}
 </div>
 <div class="card empty-card" id="no-posts" hidden><p class="empty">Nothing here yet.</p><a class="btn-ghost" href="/new-request">Create a task →</a></div>
 {% endblock %}

@@ -18,8 +18,8 @@
   <p class="action-label">{{ hero.label }}</p>
   {% if item.agreed_value and item.status not in ('open','negotiating') %}
   <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits agreed
-    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held safely{% endif %}
-    {% if item.status in ('completed_pending_release','disputed','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}
+    {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','mediation','human_review') %}· held safely{% endif %}
+    {% if item.status in ('completed_pending_release','disputed','mediation','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}
   </p>
   {% endif %}
   {% if item.status == 'scheduled' %}
@@ -34,16 +34,16 @@
       {% endif %}
     {% endif %}
   </div>
-  {% set has_more = (item.status == 'open' and is_owner) or (item.status == 'disputed' and involved) or (item.status in ('completed_pending_release','completed','resolved') and (is_owner or involved)) %}
+  {% set has_more = (item.status == 'open' and is_owner) or (item.status in ('disputed','mediation') and involved) or (item.status in ('completed_pending_release','completed','resolved') and (is_owner or involved)) %}
   {% if has_more %}
   <details class="more-actions"><summary>More actions</summary>
     <div class="more-actions-row">
       {% if item.status == 'open' and is_owner %}
       <a class="btn-ghost" href="/my-posts">Edit from My Posts</a>
-      <form method="post" action="/requests/{{ item.id }}/cancel" onsubmit="return confirm('Cancel this request? This cannot be undone.')"><button class="btn-ghost danger">Cancel request</button></form>
+      <form method="post" action="/requests/{{ item.id }}/cancel" onsubmit="return confirm('Cancel this request? It will be archived and removed from the board.')"><button class="btn-ghost danger">Cancel request</button></form>
       {% endif %}
-      {% if item.status == 'disputed' and involved %}
-      <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU for a suggested solution</a>
+      {% if item.status in ('disputed','mediation') and involved %}
+      <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">⚖️ Review IoU's Fair Resolution</a>
       {% endif %}
       {% if item.status in ('completed','resolved') and is_owner %}
         {% set transaction = history | selectattr('request_id', 'equalto', item.id) | first %}

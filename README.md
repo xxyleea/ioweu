@@ -21,13 +21,29 @@ The prototype includes the request board, a dedicated skill-matched recommendati
 
 IoU also groups at least three open tasks in a similar credit range and invites their task owners to join a voluntary task chain. No skill declaration is required: each participant chooses whether to complete one other listed task and have their own task completed by someone else. A chain activates once at least three participants accept; declines do not cancel it. The invitation page includes the task list, value explanation, shared discussion, participant responses, and the active give/receive assignments. Each task then continues through the ordinary chat, agreement, protected payment, proof, completion, and problem-reporting safeguards.
 
-When an agreed task is started, its credits move from the requester's available balance into a protected held balance. The provider must upload proof that passes the deterministic file checks and mark the task complete before the requester can confirm delivery. Credits remain held for three days after that confirmation, then release automatically unless an open problem report keeps them held. The requester must remain at or above the single `-20` credit minimum when the payment is set aside.
+When an agreed task is started, its credits move from the requester's available balance into a protected held balance. The provider must upload proof that passes the deterministic file checks and mark the task complete before the requester can confirm delivery. Credits remain held for three days after that confirmation, then release automatically unless an open problem report keeps them held. The requester must remain at or above the `-5` credit floor when the payment is set aside, and cannot start a new exchange while their balance is negative.
 
-Proof screening checks file type, size, MIME consistency, and duplicate content. It is an automated integrity check, not a claim that the system can reliably detect every downloaded or AI-generated image. Problem reports support up to five supporting files, requested credit refunds, redo/fix requests, alternative compensation descriptions, provider counter-offers, fair-solution suggestions using task/complaint/chat/history signals, and human moderator escalation.
+**Credit rules.** New members start with `+10` credits. A member can only post a request while their balance is positive, and a balance can never fall below `-5`.
 
-Completion requires at least one evidence file. After the requester confirms completion, the agreed credits remain held for three days. Due holds are released by the background worker (and also opportunistically on authenticated requests) unless an open dispute keeps the exchange frozen. After-completion disputes are accepted only while the configured dispute window is open and the task is eligible.
+Proof screening checks file type, size, MIME consistency, and duplicate content. It is an automated integrity check, not a claim that the system can reliably detect every downloaded or AI-generated image. Problem reports support up to five supporting files, requested credit refunds, redo/fix requests, alternative compensation descriptions, provider counter-offers, and escalation to a human moderator.
 
-Users must have an available balance of at least `-20` credits to post a new request or start an agreed task if setting aside the payment would take them below `-20`. The favicon is served at `/favicon.ico`.
+Completion requires at least one evidence file. After the requester confirms completion, the agreed credits remain held for three days. Due holds are released by the background worker unless an open dispute keeps the exchange frozen. After-completion disputes are accepted only while the configured dispute window is open and the task is eligible.
+
+## Dispute flow
+
+1. **Raise a dispute (`disputed`).** The requester submits a reason, evidence and a requested refund. The credits stay frozen in escrow.
+2. **User-to-user resolution (3 days).** Both participants negotiate in the chat — refund, redo, or alternative compensation. If they agree, the ledger is updated automatically and the dispute closes.
+3. **Fair Resolution (1 day).** If the three-day window closes without agreement, IoU proposes a *Fair Resolution* — a refund amount plus a transparent explanation that weighs the task description, agreed value, evidence, chat history and comparable past disputes. Both participants must accept it.
+4. **Human moderation.** If either participant rejects the proposal, or nobody responds within a day, the case escalates to a community moderator who makes the final decision (no refund / partial / full / keep frozen). The ledger is updated automatically.
+
+The stage timers are real (3 days + 1 day). For live demos, compress them:
+
+```powershell
+$env:IOWEU_FAST_DISPUTES = "6"   # 6-minute negotiation window, 2-minute Fair Resolution window
+uvicorn app:app --reload
+```
+
+Escalations notify every moderator account, and the moderator queue lives on the dashboard. Set `IOWEU_SESSION_SECRET` before deploying; otherwise a random per-process secret is generated.
 
 
 ## Seed recommendation history
