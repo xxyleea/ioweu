@@ -640,3 +640,10 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
   .home-primary{grid-template-columns:1fr}
   .progress4{grid-template-columns:1fr 1fr}
 }
+
+/* manage cards: compact like browse */
+.manage-card .card-cta{margin-top:.7rem;justify-content:flex-end}
+.manage-cta{align-items:center}
+.manage-card .browse-offer b{font-size:1.3rem}
+.manage-card > .row{padding:1.1rem 1.2rem 0}
+.manage-card > .card-cta{padding:.7rem 1.2rem 1.1rem}

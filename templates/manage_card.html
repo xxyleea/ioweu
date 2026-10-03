@@ -1,0 +1,54 @@
+<article class="card request-card browse-card manage-card cat-{{ item.category|slug }}">
+  <div class="row">
+    <div class="card-head">
+      <span class="cat-dot cat-{{ item.category|slug }}"></span>
+      <small class="cat-name">{{ item.category }}</small>
+      <h2><a class="title-link" href="/requests/{{ item.id }}">{{ item.title }}</a>
+        <span class="status s-{{ item.status }}">{{ status_labels[item.status] if status_labels is defined and item.status in status_labels else item.status.replace('_',' ') }}</span>
+      </h2>
+      <small class="muted browse-meta">
+        {{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %}
+        {% if item.preferred_time %} · 🕒 {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %} · ⏰ by {{ item.needed_by }}{% endif %}
+        {% if item.location %} · 📍 {{ item.location }}{% endif %}
+      </small>
+      <span class="browse-offer">
+        {% if item.agreed_value %}<b>{{ item.agreed_value }}</b> credits agreed
+        {% elif item.status == 'negotiating' and item.provider_value %}<b>{{ item.provider_value if item.requester_id == user.id else item.requester_value }}</b> credits on the table
+        {% else %}<b>{{ item.requester_value }}</b> credits offered{% endif %}
+      </span>
+    </div>
+    <div class="badge-col">
+      {% if pinned_ids is defined %}
+      <form method="post" action="/requests/{{ item.id }}/pin" class="pin-form"><input type="hidden" name="next" value="{{ next or '' }}"><button class="pin-btn {% if item.id in pinned_ids %}on{% endif %}" title="{% if item.id in pinned_ids %}Unpin{% else %}Pin to top{% endif %}">📌</button></form>
+      {% endif %}
+      {% if item.urgency and item.urgency != 'flexible' %}<span class="urgency urgency-{{ item.urgency }}">{{ item.urgency }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="card-cta manage-cta">
+    {% if item.status == 'open' %}
+      <a class="btn-ghost btn-sm" href="/requests/{{ item.id }}">View details →</a>
+    {% elif item.status == 'negotiating' %}
+      <a class="btn-primary btn-sm" href="/chat/{{ item.id }}">💬 Continue in chat</a>
+    {% elif item.status == 'agreement_pending' %}
+      <a class="btn-primary btn-sm" href="/chat/{{ item.id }}">Confirm exchange →</a>
+    {% elif item.status == 'confirmed' %}
+      <a class="btn-primary btn-sm" href="/chat/{{ item.id }}">📅 Schedule meetup</a>
+    {% elif item.status == 'scheduled' %}
+      <small class="muted">📅 {{ item.meetup_date }} {{ item.meetup_time }}</small><a class="btn-primary btn-sm" href="/chat/{{ item.id }}">Open workspace →</a>
+    {% elif item.status == 'in_progress' %}
+      {% if item.provider_id == user.id %}<a class="btn-primary btn-sm" href="/chat/{{ item.id }}">Mark as complete →</a>
+      {% else %}<a class="btn-ghost btn-sm" href="/chat/{{ item.id }}">💬 Open chat</a>{% endif %}
+    {% elif item.status == 'completion_submitted' %}
+      {% if item.requester_id == user.id %}<a class="btn-primary btn-sm" href="/chat/{{ item.id }}">Review completion →</a>
+      {% else %}<a class="btn-ghost btn-sm" href="/requests/{{ item.id }}">View details →</a>{% endif %}
+    {% elif item.status == 'disputed' %}
+      <a class="btn-primary btn-sm" href="/chat/{{ item.id }}">⚖️ Resolve dispute</a>
+    {% elif item.status == 'human_review' %}
+      <small class="muted">Moderator reviewing…</small><a class="btn-ghost btn-sm" href="/requests/{{ item.id }}">View →</a>
+    {% elif item.status in ('completed','resolved') %}
+      <span class="success">✓ {{ item.agreed_value }} credits</span>
+      {% if item.requester_id == user.id %}{% set transaction = history | selectattr('request_id', 'equalto', item.id) | first %}{% if transaction and transaction.kudos_given %}<small class="kudos-done">Kudos sent</small>{% else %}<form method="post" action="/requests/{{ item.id }}/kudos"><input type="hidden" name="next" value="{{ next or '' }}"><button class="kudos-button btn-sm">Give Kudos (+10%)</button></form>{% endif %}{% endif %}
+      <a class="btn-ghost btn-sm" href="/requests/{{ item.id }}">View →</a>
+    {% endif %}
+  </div>
+</article>

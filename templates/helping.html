@@ -16,8 +16,8 @@
 </div>
 
 <div class="card-list" id="post-list">
-  {% for item in helping_active %}<div class="post-item" data-group="active">{% include "request_card.html" %}</div>{% endfor %}
-  {% for item in helping_done %}<div class="post-item" data-group="done">{% include "request_card.html" %}</div>{% endfor %}
+  {% for item in helping_active %}<div class="post-item" data-group="active">{% include "manage_card.html" %}</div>{% endfor %}
+  {% for item in helping_done %}<div class="post-item" data-group="done">{% include "manage_card.html" %}</div>{% endfor %}
 </div>
 <div class="card empty-card" id="no-posts" hidden><p class="empty">You're not helping with any tasks yet.</p><a class="btn-ghost" href="/browse">Browse the Community board →</a></div>
 {% endblock %}

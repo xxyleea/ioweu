@@ -21,9 +21,9 @@
 </div>
 
 <div class="card-list" id="post-list">
-  {% for item in my_open %}<div class="post-item" data-group="open">{% include "request_card.html" %}</div>{% endfor %}
-  {% for item in my_active %}<div class="post-item" data-group="active">{% include "request_card.html" %}</div>{% endfor %}
-  {% for item in my_completed %}<div class="post-item" data-group="done">{% include "request_card.html" %}</div>{% endfor %}
+  {% for item in my_open %}<div class="post-item" data-group="open">{% include "manage_card.html" %}</div>{% endfor %}
+  {% for item in my_active %}<div class="post-item" data-group="active">{% include "manage_card.html" %}</div>{% endfor %}
+  {% for item in my_completed %}<div class="post-item" data-group="done">{% include "manage_card.html" %}</div>{% endfor %}
 </div>
 <div class="card empty-card" id="no-posts" hidden><p class="empty">Nothing here yet.</p><a class="btn-ghost" href="/new-request">Create a task →</a></div>
 {% endblock %}
