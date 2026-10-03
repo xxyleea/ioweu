@@ -21,3 +21,9 @@ a.txt
 b.txt
 j.txt
 m.txt
+
+# Runtime uploads & backups (never commit)
+uploads/
+backups/
+ioweu.db
+.wbapp_*.genie
