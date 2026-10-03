@@ -15,13 +15,29 @@
 
 <div class="chat-main">
 <div class="ws-header">
-  <a class="ws-task" href="/requests/{{ item.id }}">
-    <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
-    <span class="tt-body">
-      <span class="tt-title">{{ item.title }}</span>
-      <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>
-    </span>
-  </a>
+  <details class="ws-context card" open>
+    <summary>
+      <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
+      <span class="tt-body">
+        <span class="tt-title">{{ item.title }}</span>
+        <span class="tt-sub"><span class="status s-{{ item.status }}">{{ status_label }}</span>{% if item.agreed_value %} · {{ item.agreed_value }} credits{% endif %}</span>
+      </span>
+      <span class="ctx-caret">▾</span>
+    </summary>
+    <div class="ws-ctx-body">
+      <dl class="ctx-grid">
+        <div><dt>What</dt><dd>{{ item.description[:160] }}{% if item.description|length > 160 %}…{% endif %}</dd></div>
+        {% if item.location %}<div><dt>Where</dt><dd>📍 {{ item.location }}</dd></div>{% endif %}
+        {% if item.preferred_time %}<div><dt>When</dt><dd>🕒 {{ item.preferred_time|replace('T',' ') }}</dd></div>
+        {% elif item.needed_by %}<div><dt>When</dt><dd>⏰ by {{ item.needed_by }}</dd></div>{% endif %}
+        <div><dt>With</dt><dd>{{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %}</dd></div>
+        <div><dt>Credits</dt><dd>{{ item.agreed_value or item.requester_value }}
+          {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}</dd></div>
+        {% if item.status == 'scheduled' %}<div><dt>Meeting</dt><dd>{{ item.meetup_date }} · {{ item.meetup_time }} · {{ item.meetup_location }}</dd></div>{% endif %}
+      </dl>
+      <a class="btn-ghost btn-sm" href="/requests/{{ item.id }}">View full task →</a>
+    </div>
+  </details>
   <div class="ws-actionbar {% if hero.actor == 'you' %}needs{% endif %}">
     {% if hero.actor == 'you' %}
       <span class="ws-alabel">{{ hero.label }}</span>
@@ -70,24 +86,7 @@
 </form>
 </div>
 
-<aside class="chat-summary card">
-  <h3>Task</h3>
-  <dl class="summary-list">
-    <div><dt>What</dt><dd>{{ item.description[:140] }}{% if item.description|length > 140 %}…{% endif %}</dd></div>
-    {% if item.location %}<div><dt>Where</dt><dd>{{ item.location }}</dd></div>{% endif %}
-    {% if item.preferred_time %}<div><dt>When</dt><dd>🕒 {{ item.preferred_time|replace('T',' ') }}</dd></div>
-    {% elif item.needed_by %}<div><dt>When</dt><dd>⏰ by {{ item.needed_by }}</dd></div>{% endif %}
-    <div><dt>With</dt><dd>{{ item.requester_name }}{% if item.provider_name %} · {{ item.provider_name }}{% endif %}</dd></div>
-  </dl>
-  <h3>Transaction</h3>
-  <dl class="summary-list">
-    <div><dt>Credits</dt><dd>{{ item.agreed_value or item.requester_value }}
-      {% if item.status in ('confirmed','scheduled','in_progress','completion_submitted','disputed','human_review') %}· held safely{% elif item.status in ('completed','resolved') %}· released{% endif %}</dd></div>
-    {% if item.status == 'scheduled' %}<div><dt>Meeting</dt><dd>{{ item.meetup_date }} · {{ item.meetup_time }}<br>{{ item.meetup_location }}</dd></div>{% endif %}
-    {% if item.status in ('disputed','human_review') %}<div><dt>Dispute</dt><dd>Credits frozen while resolving</dd></div>{% endif %}
-  </dl>
-  <a class="btn-ghost" href="/requests/{{ item.id }}">View full task →</a>
-</aside>
+
 </div>
 
 {% if item.status in ('negotiating','agreement_pending') %}

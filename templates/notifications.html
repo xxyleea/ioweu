@@ -27,19 +27,20 @@
   {% else %}<p class="empty">No notifications yet.</p>{% endfor %}
 </div>
 {% else %}
-<div class="card threads-panel">
+<div class="card notif-card">
   {% for t in threads %}
-  <a class="ws-thread thread-row" href="/chat/{{ t.id }}">
-    <div class="thread-main">
+  <div class="notif-row">
+    <span class="notif-kind k-info">Chat</span>
+    <div class="notif-body">
       <b>{{ t.title }}</b>
-      <small>{{ t.last_body[:90] }}</small>
+      <small class="notif-sub">{{ t.requester_name }}{% if t.provider_name %} · {{ t.provider_name }}{% endif %} — {{ (t.last_body or '')[:80] }}</small>
     </div>
-    <div class="thread-right">
-      <span class="status s-{{ t.status }}">{{ status_labels[t.status] if t.status in status_labels else t.status.replace('_',' ') }}</span>
-      <small class="muted">{{ t.last_at[:16].replace('T',' ') }}</small>
+    <div class="notif-side">
+      <small class="muted">{{ (t.last_at or '')[:16].replace('T',' ') }}</small>
+      <a class="btn-ghost btn-sm" href="/chat/{{ t.id }}">Open →</a>
     </div>
-  </a>
-  {% else %}<p class="empty threads-empty">No conversations yet.</p>{% endfor %}
+  </div>
+  {% else %}<p class="empty">No conversations yet.</p>{% endfor %}
 </div>
 {% endif %}
 {% endblock %}
