@@ -161,10 +161,12 @@
             <button class="btn-ghost btn-sm">Change my task</button></form>
         {% elif task.selected_by_user_id %}
           <button class="btn-ghost" disabled>Selected by {{ task.selected_by_name }}</button>
-        {% else %}
+        {% elif task.request_status == 'open' and task.reservation_status not in ('expired', 'active_circle') %}
           <form method="post" action="/chains/{{ proposal.id }}/select">
             <input type="hidden" name="request_id" value="{{ task.request_id }}">
             <button class="btn-primary">I can help with this</button></form>
+        {% else %}
+          <button class="btn-ghost" disabled>No longer available</button>
         {% endif %}
       {% endif %}
     </div>
