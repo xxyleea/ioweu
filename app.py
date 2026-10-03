@@ -2780,16 +2780,23 @@ def chain_invitations(request: Request):
         expire_circles(connection)
         ensure_chain_invitations(connection)
         proposals = connection.execute(
-            """SELECT cp.*, cm.response, COUNT(allm.user_id) member_count,
+            """SELECT cp.*, cm.response, cm.status AS my_status,
+                      COUNT(allm.user_id) member_count,
                       SUM(allm.response='accepted') accepted_count
                FROM chain_proposals cp JOIN chain_members cm ON cm.proposal_id=cp.id
                JOIN chain_members allm ON allm.proposal_id=cp.id
                WHERE cm.user_id=?
-                 AND cm.response != 'declined' AND COALESCE(cm.status,'pending') != 'removed'
                  AND allm.response != 'declined' AND COALESCE(allm.status,'pending') != 'removed'
+                 AND cp.status IN ('pending','start_confirming','active','recovery')
                GROUP BY cp.id ORDER BY cp.created_at DESC""",
             (user["id"],)).fetchall()
-    return render(request, "chain_invitations.html", page="circle", proposals=proposals)
+        rows = []
+        for p in proposals:
+            left = (p["response"] == "declined"
+                    or (p["my_status"] or MEMBER_PENDING) in MEMBER_GONE)
+            rows.append({"row": p, "left": left})
+    return render(request, "chain_invitations.html", page="circle", proposals=rows,
+                  status_labels=CIRCLE_STATUS_LABELS)
 
 
 @app.get("/chains/suggestions", response_class=HTMLResponse)
