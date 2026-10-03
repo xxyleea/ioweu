@@ -467,7 +467,8 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .mp-step{font-size:.78rem;color:var(--muted)}
 .mp-step.done{color:#3d6b35;font-weight:600}
 .mp-step.current{color:var(--ink);font-weight:700}
-@media (max-width:1200px){.chat-workspace{grid-template-columns:1fr}.chat-threads,.chat-summary{display:none}}
+@media (max-width:1200px){.chat-workspace{grid-template-columns:220px minmax(0,1fr)}}
+@media (max-width:820px){.chat-workspace{grid-template-columns:180px minmax(0,1fr)}}
 
 /* ---------- action banner ---------- */
 .action-banner{display:flex;justify-content:space-between;align-items:center;gap:1rem;background:var(--yellow);border-radius:18px;padding:.9rem 1.2rem;margin-bottom:1rem}
@@ -678,3 +679,13 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 /* notification sub-line */
 .notif-sub{display:block;color:var(--muted);margin-top:.15rem}
 .notif-body{min-width:0}
+
+/* chat page: full-bleed like a messenger */
+.content-chat{max-width:none;padding:1.6rem 2rem}
+.content-chat .chat-workspace{height:calc(100vh - 3.2rem)}
+
+/* manage card footer: credits left, actions right on one line */
+.manage-cta{justify-content:flex-start}
+.manage-credits{margin:0}
+.manage-spacer{flex:1}
+.manage-card h2{overflow:visible}

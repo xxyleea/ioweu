@@ -11,11 +11,6 @@
         {% if item.preferred_time %} · 🕒 {{ item.preferred_time|replace('T',' ') }}{% elif item.needed_by %} · ⏰ by {{ item.needed_by }}{% endif %}
         {% if item.location %} · 📍 {{ item.location }}{% endif %}
       </small>
-      <span class="browse-offer">
-        {% if item.agreed_value %}<b>{{ item.agreed_value }}</b> credits agreed
-        {% elif item.status == 'negotiating' and item.provider_value %}<b>{{ item.provider_value if item.requester_id == user.id else item.requester_value }}</b> credits on the table
-        {% else %}<b>{{ item.requester_value }}</b> credits offered{% endif %}
-      </span>
     </div>
     <div class="badge-col">
       {% if pinned_ids is defined %}
@@ -25,6 +20,12 @@
     </div>
   </div>
   <div class="card-cta manage-cta">
+    <span class="browse-offer manage-credits">
+      {% if item.agreed_value %}<b>{{ item.agreed_value }}</b> credits agreed
+      {% elif item.status == 'negotiating' and item.provider_value %}<b>{{ item.provider_value if item.requester_id == user.id else item.requester_value }}</b> credits on the table
+      {% else %}<b>{{ item.requester_value }}</b> credits offered{% endif %}
+    </span>
+    <span class="manage-spacer"></span>
     {% if item.status == 'open' %}
       <a class="btn-ghost btn-sm" href="/requests/{{ item.id }}">View details →</a>
     {% elif item.status == 'negotiating' %}

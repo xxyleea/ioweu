@@ -20,7 +20,7 @@
     <form method="post" action="/logout"><button class="link-button" title="Sign out">⏻</button></form>
   </div>
 </nav>
-<main class="content">{% block content %}{% endblock %}</main>
+<main class="content {% block content_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 <div class="toast" id="toast" hidden></div>
 <script>
 (() => {
