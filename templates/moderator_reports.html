@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}IoU · Moderation{% endblock %}
+{% block content %}
+<header class="page-head"><div>
+  <h1>Moderation workspace</h1>
+  <p class="muted">Reports, appeals and account standing. Every action is recorded.</p>
+</div>
+<a class="btn-ghost" href="/">Dispute queue →</a></header>
+
+<h2 class="section-title">Reliability appeals ({{ appeals|length }})</h2>
+<div class="card">
+  {% for item in appeals %}
+  <div class="moderator-item">
+    <b>{{ item.reporter_name }}</b> <span class="muted">appealed their account standing</span>
+    <p>{{ item.description }}</p>
+    <small class="muted">{{ item.created_at[:16]|replace('T',' ') }} · {{ item.status }}</small>
+    {% if item.status == 'open' %}
+    <div class="modal-actions">
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="restore"><input type="hidden" name="note" value="Appeal upheld"><button class="btn-primary">Uphold · restore standing</button></form>
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="dismiss"><button class="btn-ghost">Dismiss appeal</button></form>
+    </div>
+    {% else %}<p class="success">Resolved: {{ item.resolution }}</p>{% endif %}
+  </div>
+  {% else %}<p class="empty">No appeals waiting.</p>{% endfor %}
+</div>
+
+<h2 class="section-title">Reported users &amp; tasks ({{ reports|length }})</h2>
+<div class="card">
+  {% for item in reports if item.kind != 'appeal' %}
+  <div class="moderator-item">
+    <b>{{ item.reported_name or 'Unknown resident' }}</b>
+    {% if item.request_title %}<span class="muted"> · task “{{ item.request_title }}”</span>{% endif %}
+    <p>{{ item.description }}</p>
+    <small class="muted">Reported by {{ item.reporter_name or 'a resident' }} · {{ item.category }} · {{ item.created_at[:16]|replace('T',' ') }} · {{ item.status }}</small>
+    {% if item.status == 'open' %}
+    <div class="modal-actions">
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="dismiss"><button class="btn-ghost">Dismiss</button></form>
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="warning"><button class="btn-ghost">Warning (−5)</button></form>
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="fraud_evidence"><button class="btn-ghost">False evidence (−20)</button></form>
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="restrict"><button class="btn-ghost">Restrict (≤25)</button></form>
+      <form method="post" action="/moderator/reports/{{ item.id }}/resolve"><input type="hidden" name="resolution" value="suspend"><button class="btn-ghost danger">Suspend</button></form>
+    </div>
+    {% else %}<p class="success">Resolved: {{ item.resolution }} {% if item.resolution %}· recorded{% endif %}</p>{% endif %}
+  </div>
+  {% else %}<p class="empty">No reports waiting. Enjoy the calm.</p>{% endfor %}
+</div>
+{% endblock %}

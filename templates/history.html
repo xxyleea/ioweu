@@ -1,20 +1,40 @@
 {% extends "base.html" %}
-{% block title %}IoU · Credit history{% endblock %}
+{% block title %}IoU · Credits{% endblock %}
 {% block content %}
 <header class="page-head">
   <div>
     <a class="btn-ghost btn-back" href="/">← Home</a>
-    <h1 style="margin-top:.8rem">Credit history</h1>
-    <p class="muted">Every credit movement on your account.</p>
+    <h1 style="margin-top:.8rem">Credits</h1>
+    <p class="muted">One currency on IoU — community units, not cash.</p>
   </div>
-  <a class="btn-ghost" href="/account">Account →</a>
 </header>
+
+<div class="credit-summary">
+  <div class="card"><span class="stat-label">Available</span><span class="stat-big {% if summary.available < 0 %}neg{% endif %}">{{ summary.available }}</span></div>
+  <div class="card"><span class="stat-label">Held</span><span class="stat-big">{{ summary.held }}</span><small class="muted">reserved for active tasks</small></div>
+  <div class="card"><span class="stat-label">Starting credits</span><span class="stat-big">{{ summary.starting }}</span></div>
+  <div class="card"><span class="stat-label">Earned</span><span class="stat-big">{{ summary.earned }}</span></div>
+  <div class="card"><span class="stat-label">Spent</span><span class="stat-big">{{ summary.spent }}</span></div>
+  <div class="card"><span class="stat-label">Bonus credits</span><span class="stat-big">{{ summary.bonus }}</span><small class="muted">thumbs-up and community bonus</small></div>
+</div>
+
+<div class="board-tabs">
+  {% for key in views %}
+  <a class="btab {% if view == key %}active{% endif %}" href="/history?view={{ key }}">{{ key|capitalize }}</a>
+  {% endfor %}
+</div>
 
 <div class="card">
   <ul class="ledger-list">
   {% for item in ledger %}
     <li><span class="ledger-amount {% if item.amount > 0 %}pos{% else %}neg{% endif %}">{{ '+' if item.amount > 0 else '' }}{{ item.amount }}</span><div><b>{{ item.kind.replace('_',' ') }}</b>{% if item.title %} · {{ item.title }}{% endif %}<br><small>{{ item.description }} · {{ item.created_at[:16]|replace('T',' ') }}</small></div></li>
-  {% else %}<li class="empty">No credit activity yet.</li>{% endfor %}
+  {% else %}<li class="empty">Nothing in this category yet.</li>{% endfor %}
   </ul>
 </div>
+
+<section class="card">
+  <h2>Circles</h2>
+  <p class="muted">You have completed {{ summary.circle }} Circle{{ 's' if summary.circle != 1 }} — help given, help received, zero credits exchanged.</p>
+  <a class="btn-ghost btn-sm" href="/chain-invitations">Circle opportunities →</a>
+</section>
 {% endblock %}

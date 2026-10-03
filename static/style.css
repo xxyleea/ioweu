@@ -826,3 +826,46 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .pv-credits{display:flex;flex-direction:column;align-items:flex-end;gap:.1rem;margin-top:.5rem}
 .pv-credits b{font-size:1.4rem;font-weight:800}
 .pv-credits b small{font-size:.8rem;font-weight:600;color:var(--muted)}
+
+/* Reliability, profile and Circle additions */
+.rel-label{padding:.15rem .5rem;border-radius:999px;font-size:.78rem;font-weight:600;display:inline-block}
+.rel-label.rel-excellent,.rel-excellent{background:#e7f6ec;color:#2c7a4b}
+.rel-label.rel-strong,.rel-strong{background:#eaf3de;color:#3b6d11}
+.rel-label.rel-limited,.rel-limited{background:#faeeda;color:#854f0b}
+.rel-label.rel-restricted,.rel-restricted{background:#fceceb;color:#a32d2d}
+.rel-label.rel-suspended,.rel-suspended{background:#f7c1c1;color:#791f1f}
+.circle-banner{display:flex;align-items:center;gap:1rem;background:#eef4fb;border:1px solid #cfe0f5}
+.circle-banner .circle-spin{font-size:1.8rem;color:#378add}
+.circle-banner p{margin:.2rem 0 0}
+.circle-banner .btn-primary{margin-left:auto;white-space:nowrap}
+.circle-tag{font-size:.85rem;color:#185fa5;background:#e6f1fb;padding:.2rem .55rem;border-radius:999px;display:inline-block;margin-top:.3rem}
+.circle-complete{background:#eaf3de}
+.circle-stats{display:flex;gap:2rem;margin:.8rem 0}
+.circle-stats div{display:flex;flex-direction:column;align-items:center}
+.alert-card{border-color:#f0c9c9;background:#fdf3f3}
+.comp-form{display:flex;gap:.6rem;align-items:flex-end;margin-top:.6rem;flex-wrap:wrap}
+.comp-form label{flex:1;min-width:200px}
+.requester-preview{display:flex;align-items:center;gap:.8rem;padding:.6rem;background:var(--surface-2, #f7f5f0);border-radius:10px;margin:.4rem 0 .8rem}
+.requester-preview .btn-ghost{margin-left:auto}
+.badge-row{display:flex;gap:.4rem;flex-wrap:wrap;margin:.4rem 0}
+.match-badge.verified{background:#eaf3de;color:#3b6d11}
+.match-badge.simulated{background:#f1efe8;color:#5f5e5a}
+.profile-grid{display:grid;grid-template-columns:320px 1fr;gap:1.2rem}
+@media (max-width:900px){.profile-grid{grid-template-columns:1fr}}
+.reliability-panel{text-align:center}
+.credit-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:1rem}
+.credit-summary .card{display:flex;flex-direction:column;gap:.2rem}
+.legal-doc .legal-section{margin-bottom:1.1rem}
+.legal-doc h2{font-size:.95rem;margin-bottom:.2rem}
+.legal-nav{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1rem}
+.legal-links{display:flex;flex-direction:column;gap:.35rem}
+.nav-footer{font-size:.76rem;color:var(--muted);margin-top:1rem}
+.head-actions{display:flex;gap:.5rem;align-items:center}
+.attach-btn{display:flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:50%;border:1px solid var(--border);cursor:pointer;font-size:1rem}
+.chat-footnote{display:flex;gap:.6rem;align-items:center;font-size:.74rem;color:var(--muted);flex-wrap:wrap}
+.tiny-link{background:none;border:none;color:var(--muted);text-decoration:underline;font-size:.74rem;cursor:pointer;font-family:inherit}
+.inline-form{display:inline}
+.chat-image img{max-width:220px;max-height:220px;border-radius:10px;display:block;margin-bottom:.3rem}
+.chat-file{display:inline-block;padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;font-size:.8rem;margin-bottom:.3rem}
+.consent-block{border:1px solid var(--border);border-radius:12px;padding:.9rem 1rem;background:var(--surface-2, #f7f5f0)}
+.consent-block .field-label{margin-bottom:.4rem}

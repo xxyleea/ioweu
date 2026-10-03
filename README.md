@@ -25,6 +25,38 @@ When an agreed task is started, its credits move from the requester's available 
 
 **Credit rules.** New members start with `+10` credits. A member can only post a request while their balance is positive, and a balance can never fall below `-5`.
 
+## Reliability score
+
+Separate from credits. Every resident starts at **60/100**. It is not a financial credit score — it measures dependability on IoU.
+
+| Band | Label | Effect |
+| --- | --- | --- |
+| 80–100 | Excellent | full access |
+| 60–79 | Strong | full access |
+| 30–59 | Limited | full access |
+| 1–29 | Restricted | max task value 5 credits, warning shown, may appeal |
+| 0 | Suspended | cannot post or accept; history, disputes, export and appeal remain |
+
+Events are configurable in `RELIABILITY_EVENTS`: completed task `+1`, thumbs-up `+2`, five-task streak `+2`, mutually agreed cancellation `0`, late cancellation `−5`, no-show `−10`, serious failure `−10`, fraudulent evidence `−20`, broken Circle commitment `−10`. Every change is written to `reliability_events` with a reason, and moderators can restrict or suspend an account (an action that is always recorded). Restricted and suspended residents can submit an appeal from the home banner or Settings, and moderators resolve appeals on `/moderator/reports`. Reliability appears in the sidebar, on the home dashboard, on task cards and detail pages, and on the public profile.
+
+## The Circle
+
+A Circle is a reciprocal help loop: **no credits move**. When three or more open needs within roughly ±2 credits are detected, residents are invited to join a Circle. Each member picks which of the other tasks they would be comfortable helping with (never their own), all members must accept, and only then is the loop assigned. Circle tasks are tagged `circle_id`, skip escrow entirely, and produce no ledger transaction — when the last task completes, the Circle closes with a "3 needs fulfilled · 3 neighbours helped · 0 credits exchanged" screen. Withdrawing after neighbours have been helped is recorded as a broken commitment, unfinished needs return to the board, and completed work stays honoured. Blocked residents are never matched into the same Circle. Circle suggestions can be turned off in Settings.
+
+## Safety, consent and data
+
+Registration requires four consent checkboxes (Terms, Privacy Notice, Community Guidelines, competence note); optional analytics consent defaults to **off** and lives under Settings → Privacy & Data. Identity verification is simulated — no HKID is collected — and is labelled as a planned feature that would stop people farming welcome credits. Task creation and chat run a keyword blocklist for clearly prohibited activity. Residents can report a user or task and block a resident (blocking stops direct messaging, task acceptance and shared Circle matching). Moderators get `/moderator/reports` with dismiss / warning / false-evidence / restrict / suspend / restore actions, each of which writes a reliability event. `Download My Data` exports a JSON file (account, ledger, tasks, reliability events, Circle participation, privacy settings, consents) and `Delete My Account` deactivates the profile behind a `DELETE` confirmation while keeping the ledger intact.
+
+Legal pages live at `/legal/tos`, `/legal/privacy`, `/legal/guidelines`, `/legal/disputes`, `/legal/circle` and `/legal/ai`.
+
+## Evidence screening
+
+Screening checks file type, size, MIME consistency, duplicate content and basic image signals. It **flags rather than blocks**: a suspicious file is accepted and marked `requires_review`, and the participants see "Evidence requires review" — never "fraud detected". Flags become supporting information during a dispute. Categories that don't suit photographs (education, companionship) accept the requester's confirmation instead of a file.
+
+## Cancellation
+
+Cancellation is requested, not unilateral, once both sides are involved. The other participant can agree, discuss first, or ask for compensation for work already committed; the requester can accept, decline, or escalate to IoU's normal resolution ladder. Agreed cancellations carry no reliability penalty and held credits are returned.
+
 Proof screening checks file type, size, MIME consistency, and duplicate content. It is an automated integrity check, not a claim that the system can reliably detect every downloaded or AI-generated image. Problem reports support up to five supporting files, requested credit refunds, redo/fix requests, alternative compensation descriptions, provider counter-offers, and escalation to a human moderator.
 
 Completion requires at least one evidence file. After the requester confirms completion, the agreed credits remain held for three days. Due holds are released by the background worker unless an open dispute keeps the exchange frozen. After-completion disputes are accepted only while the configured dispute window is open and the task is eligible.

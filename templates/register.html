@@ -20,8 +20,11 @@
       <h1>Create your account</h1>
       <p class="muted">Your login for the neighbourhood credit account.</p>
       <label>Name<input id="reg-name" name="name" placeholder="Your name"></label>
+      <label>Username<input id="reg-username" name="username" placeholder="e.g. sarah_k (optional, shown on your profile)"></label>
       <label>Email<input id="reg-email" name="email" type="email" placeholder="you@example.com"></label>
       <label>Password<input id="reg-password" name="password" type="password" placeholder="At least 6 characters"></label>
+      <label>Confirm password<input id="reg-confirm" name="confirm_password" type="password" placeholder="Type it again"></label>
+      <p class="muted" style="font-size:.82rem">No identity document is needed for this prototype. Identity verification is simulated and marked as a planned feature.</p>
     </div>
 
     <div class="wizard-step" data-step="2">
@@ -37,12 +40,6 @@
     </div>
 
     <div class="wizard-step" data-step="3">
-      <h1>Your HKID</h1>
-      <p class="muted">Used once to verify you're a real Hong Kong resident. It's never shown to other users.</p>
-      <label>HKID<input id="reg-hkid" name="hkid" placeholder="e.g. A123456(7)"></label>
-    </div>
-
-    <div class="wizard-step" data-step="4">
       <h1>When were you born?</h1>
       <p class="muted">Scroll to pick your birthday.</p>
       <div class="picker">
@@ -53,7 +50,7 @@
       <input type="hidden" name="birthday" id="birthday" value="2000-01-01">
     </div>
 
-    <div class="wizard-step" data-step="5">
+    <div class="wizard-step" data-step="4">
       <h1>What can you offer?</h1>
       <p class="muted">Pick the big topics first — we'll go into details next.</p>
       <div class="topic-grid">
@@ -63,7 +60,7 @@
       </div>
     </div>
 
-    <div class="wizard-step" data-step="6">
+    <div class="wizard-step" data-step="5">
       <h1>Pick your skills</h1>
       <p class="muted">Choose everything you're comfortable offering.</p>
       {% for genre, subs in skill_tree.items() %}
@@ -79,21 +76,22 @@
       <p class="empty" id="no-topics" hidden>Go back and pick at least one topic — or just join and do it later.</p>
     </div>
 
-    <div class="wizard-step" data-step="7">
+    <div class="wizard-step" data-step="6">
       <h1>Before you join</h1>
-      <p class="muted">Please read and confirm the following.</p>
+      <p class="muted">These agreements keep the community safe. You can change the last one later under Settings → Privacy &amp; Data.</p>
       <div class="consent-block">
         <p class="field-label">Required</p>
-        <label class="check-row"><input type="checkbox" name="consent_tos" value="1" class="consent-req"> I agree to the <a href="/help" target="_blank">Terms of Service</a></label>
-        <label class="check-row"><input type="checkbox" name="consent_privacy" value="1" class="consent-req"> I acknowledge the Privacy Notice</label>
-        <label class="check-row"><input type="checkbox" name="consent_guidelines" value="1" class="consent-req"> I agree to the Community Guidelines</label>
-        <label class="check-row"><input type="checkbox" name="consent_competence" value="1" class="consent-req"> I understand that IoU facilitates exchanges but does not automatically verify the professional competence of every provider</label>
+        <label class="check-row"><input type="checkbox" name="agree_tos" value="1" id="agree-tos" class="consent-req"> I agree to the <a href="/legal/tos" target="_blank">Terms of Service</a>.</label>
+        <label class="check-row"><input type="checkbox" name="agree_privacy" value="1" id="agree-privacy" class="consent-req"> I acknowledge the <a href="/legal/privacy" target="_blank">Privacy Notice</a>.</label>
+        <label class="check-row"><input type="checkbox" name="agree_guidelines" value="1" id="agree-guidelines" class="consent-req"> I agree to the <a href="/legal/guidelines" target="_blank">Community Guidelines</a>.</label>
+        <label class="check-row"><input type="checkbox" name="agree_competence" value="1" id="agree-competence" class="consent-req"> I understand that IoU facilitates exchanges but does not automatically verify the professional competence of every provider.</label>
         <p class="field-label" style="margin-top:1rem">Optional</p>
-        <label class="check-row"><input type="checkbox" name="consent_analytics" value="1"> Allow anonymized usage data to improve IoU recommendations and matching</label>
+        <label class="check-row"><input type="checkbox" name="analytics_consent" value="1"> Allow anonymized usage data to improve IoU recommendations and matching. <small class="muted">Off by default.</small></label>
       </div>
+      <p class="muted" id="consent-hint" hidden>Tick the four required agreements to continue.</p>
     </div>
 
-    <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+    <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
     <div class="wizard-nav">
       <button type="button" class="btn-ghost" id="back-btn" hidden>← Back</button>
       <button type="button" class="btn-primary" id="next-btn">Next →</button>
@@ -120,7 +118,7 @@ function show(i) {
   backBtn.hidden = i === 0;
   nextBtn.hidden = i === steps.length - 1;
   submitBtn.hidden = i !== steps.length - 1;
-  if (i === 6) {
+  if (i === 5) {
     const chosen = new Set(topicCards.filter(c => c.classList.contains("selected")).map(c => c.dataset.genre));
     sections.forEach(s => s.hidden = !chosen.has(s.dataset.genre));
     document.querySelector("#no-topics").hidden = chosen.size > 0;
@@ -138,15 +136,18 @@ function validStep(i) {
       if (!el.value.trim()) { markInvalid(el); return false; }
     }
     if (document.querySelector("#reg-password").value.length < 6) { alert("Password needs at least 6 characters."); return false; }
+    if (document.querySelector("#reg-password").value !== document.querySelector("#reg-confirm").value) {
+      markInvalid(document.querySelector("#reg-confirm")); return false;
+    }
   }
   if (i === 2) {
     if (!document.querySelector("#reg-district").value) { markInvalid(document.querySelector("#reg-region")); return false; }
     if (!document.querySelector("#reg-address").value.trim()) { markInvalid(document.querySelector("#reg-address")); return false; }
   }
-  if (i === 3 && !document.querySelector("#reg-hkid").value.trim()) { markInvalid(document.querySelector("#reg-hkid")); return false; }
-  if (i === 7) {
+  if (i === 6) {
     const missing = [...document.querySelectorAll(".consent-req")].filter(c => !c.checked);
-    if (missing.length) { markInvalid(missing[0]); return false; }
+    document.querySelector("#consent-hint").hidden = missing.length === 0;
+    if (missing.length) { markInvalid(missing[0].parentElement); return false; }
   }
   return true;
 }

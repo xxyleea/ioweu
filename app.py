@@ -6,6 +6,7 @@ import json
 import hmac
 import logging
 import os
+import re
 import secrets
 import sqlite3
 import threading
@@ -36,6 +37,272 @@ DISPUTE_NEGOTIATION_WINDOW = (
 DISPUTE_MEDIATION_WINDOW = (
     timedelta(minutes=float(_FAST_DISPUTES) / 3) if _FAST_DISPUTES else timedelta(days=1)
 )
+
+# ---------------------------------------------------------------------------
+# Reliability score (separate from credits — measures dependability on IoU)
+# ---------------------------------------------------------------------------
+RELIABILITY_START = 60
+RESTRICTED_TASK_VALUE_CAP = 5
+RELIABILITY_EVENTS = {
+    "task_completed": 1,
+    "thumbs_up": 2,
+    "five_task_streak": 2,
+    "mutual_cancellation": 0,
+    "late_cancellation": -5,
+    "no_show": -10,
+    "serious_failure": -10,
+    "fraudulent_evidence": -20,
+    "broken_circle_commitment": -10,
+    "guideline_violation": -5,
+}
+
+# Content screening — a starter blocklist of clearly prohibited activity.
+# This is a keyword filter, not a moderation model, and it is deliberately
+# over-blocking rather than under-blocking.
+BANNED_TERMS = (
+    "fuck", "shit", "bitch", "cunt", "whore", "slut", "rape", "molest",
+    "heroin", "cocaine", "methamphetamine", "crystal meth", "mdma", "ketamine",
+    "buy drugs", "sell drugs", "drug deal", "deliver weed", "weed delivery",
+    "money laundering", "launder money", "hitman", "murder for hire",
+    "pornography", "child porn", "prostitution", "escort service", "sex for money",
+    "buy a gun", "sell a gun", "firearm for sale", "counterfeit money",
+    "fake passport", "fake id card", "pyramid scheme", "ponzi scheme",
+)
+
+LEGAL_DOCS = {
+    "tos": ("Terms of Service", [
+        ("Platform role", "IoU facilitates community exchanges between neighbours. It does not employ providers, and it does not act as a party to any task agreement between residents."),
+        ("User responsibility", "Residents must describe their needs honestly, represent their own abilities truthfully, and communicate expectations clearly before agreeing to an exchange."),
+        ("Safety", "Illegal and prohibited activity is not allowed. IoU screens obvious keywords, but residents remain responsible for what they post and accept."),
+        ("Qualifications", "IoU does not automatically verify professional qualifications. Discuss and evaluate credentials yourself unless a profile is explicitly marked as verified."),
+        ("Credits", "IoU credits are community units used inside the platform. They are not legal tender and are not redeemable for cash."),
+        ("Circle", "Circle participation is voluntary and depends on reciprocal commitments between residents. No credits move when a Circle completes."),
+        ("Cancellation", "Once both parties agree, a commitment is binding subject to the cancellation and dispute rules published here."),
+        ("Moderation", "IoU may investigate reports, restrict or suspend accounts, and record a traceable moderation entry for any action taken."),
+        ("AI", "AI recommendations — including credit reference bands, evidence flags and mediation proposals — are advisory. A human makes the final decision when either party rejects a proposal."),
+        ("Human moderation", "Unresolved disputes can escalate to a human moderator whose decision is final for that case."),
+        ("Account suspension", "Serious or repeated violations may lead to restriction or suspension of an account."),
+        ("Data", "See the Privacy Notice for what IoU collects and why."),
+    ]),
+    "privacy": ("Privacy Notice", [
+        ("What we collect", "Account data (name, email, region, neighbourhood), profile data you choose to add, task and Circle activity, ledger entries, chat messages needed to run an exchange, and any evidence files you upload."),
+        ("Why we collect it", "To match neighbours, hold and release credits, resolve disputes, keep the ledger honest, and keep accounts secure."),
+        ("Identity verification", "This prototype uses simulated verification. No genuine identity document is required or stored during the demo."),
+        ("What we do not publish", "Your exact address is never shown publicly. Tasks display an approximate neighbourhood only."),
+        ("Private address handling", "Contact details and precise locations are only exchanged between matched participants, and only when you choose to share them."),
+        ("Chat and evidence", "Task chats and uploaded evidence may be reviewed by a moderator when a dispute is raised. We tell you this before you agree to a task."),
+        ("AI processing", "Required processing powers credit reference bands, evidence flags and mediation proposals. Anything beyond that is optional."),
+        ("Optional analytics", "Allowing anonymized usage data to improve recommendations is off by default and stays under your control."),
+        ("Your rights", "You can download your data at any time and request account deletion. Some records may remain in de-identified form to preserve ledger integrity or resolve open disputes."),
+    ]),
+    "guidelines": ("Community Guidelines", [
+        ("Respect", "Treat neighbours respectfully, in chat and in person."),
+        ("Honest descriptions", "Describe tasks accurately, including effort, urgency and any special requirements."),
+        ("No illegal activity", "Do not offer or request prohibited services."),
+        ("Credentials", "Do not misrepresent qualifications or experience."),
+        ("Credits", "Do not manipulate credits with fake exchanges between accounts you control."),
+        ("Evidence", "Do not submit evidence you did not create, or evidence copied from elsewhere."),
+        ("Privacy", "Do not share another resident's personal information without permission."),
+        ("Harassment", "Harassment of any kind is grounds for restriction."),
+        ("Circle commitments", "Honour Circle commitments — someone is relying on you."),
+        ("Communicate early", "If plans change, say so early rather than disappearing."),
+    ]),
+    "disputes": ("Dispute Policy", [
+        ("Direct resolution first", "When an issue is raised, both participants get a negotiation window to settle it themselves. Nothing is escalated automatically."),
+        ("AI-assisted mediation", "If you cannot agree, IoU proposes a fair resolution with a written explanation. Both participants must accept it."),
+        ("Human moderation", "If either party rejects the proposal, a human moderator decides. Outcomes can be no refund, partial refund, full refund, a redo, or a request for more evidence."),
+        ("Credits stay frozen", "Disputed credits stay held until the case closes."),
+        ("Moderator decisions", "Every moderator action creates a record. Moderators cannot change balances without leaving a traceable moderation entry."),
+        ("Reliability impact", "Serious failures and confirmed fraudulent evidence reduce reliability. Repeated failures can restrict or suspend an account."),
+        ("Appeals", "Restricted or suspended accounts may appeal. A moderator reviews the appeal and records the result."),
+    ]),
+    "circle": ("Circle Agreement", [
+        ("Voluntary", "Joining a Circle is voluntary and requires every participant to accept."),
+        ("No credits", "No IoU credits are exchanged when a Circle completes. That is the point of the Circle."),
+        ("Your commitment", "You promise to help with the task you chose. You will not be asked to do your own task."),
+        ("Not every need is a match", "The system does not judge whether you can do every task — you choose what you are comfortable helping with."),
+        ("Completion still applies", "Each task is still completed normally: mark complete, then the requester confirms. Circle tasks do not require a photo if both parties agree it is unnecessary."),
+        ("If someone withdraws", "IoU tries to find a replacement. If none exists, remaining tasks return to the board and the participant who withdrew forfeits standing that affects future Circles."),
+        ("Fallback to credits", "If someone received help but did not give theirs, the completed contribution can be converted into a normal credit claim using its displayed reference value."),
+    ]),
+    "ai": ("AI Transparency Notice", [
+        ("Advisory only", "AI recommendations — credit reference bands, evidence flags, mediation proposals — are advisory. They never override you."),
+        ("Credit reference band", "Calculated from agreed values for similar completed tasks in the same category over the last 90 days, adjusted for estimated effort, complexity and quality."),
+        ("Evidence screening", "Checks file type, size, format consistency, whether the same file was submitted before, and basic image signals. It flags; it does not declare fraud."),
+        ("Mediation proposal", "Weighs the agreed value, the requested refund, how much communication took place, whether evidence was supplied, and how similar past disputes resolved."),
+        ("Limits", "The system cannot reliably detect every downloaded or AI-generated image. Flags are supporting information for a human decision, never proof."),
+        ("Human fallback", "Either party can reject a proposal and escalate to a human moderator."),
+        ("Data use", "Required processing happens when you use those features. Optional analytics for improving recommendations is off unless you turn it on."),
+    ]),
+}
+
+
+def find_banned_term(*parts: str) -> str | None:
+    """Return the first prohibited keyword found in the supplied text."""
+    squashed = " ".join(
+        re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(part or "").lower())).strip()
+        for part in parts
+    )
+    for term in BANNED_TERMS:
+        if term in squashed:
+            return term
+    return None
+
+
+def reliability_label(score: int) -> str:
+    if score >= 80:
+        return "Excellent"
+    if score >= 60:
+        return "Strong"
+    if score >= 30:
+        return "Limited"
+    if score >= 1:
+        return "Restricted"
+    return "Suspended"
+
+
+def reliability_tier(score: int) -> str:
+    if score >= 30:
+        return "normal"
+    if score >= 1:
+        return "restricted"
+    return "suspended"
+
+
+def user_tier(user: Any) -> str:
+    """Effective standing: an explicit moderator suspension always wins."""
+    if user is not None and "account_status" in user.keys() and user["account_status"] == "suspended":
+        return "suspended"
+    score = user["reliability"] if user is not None and user["reliability"] is not None else RELIABILITY_START
+    return reliability_tier(score)
+
+
+def user_reliability(user: Any) -> int:
+    if user is None or "reliability" not in user.keys() or user["reliability"] is None:
+        return RELIABILITY_START
+    return user["reliability"]
+
+
+def apply_reliability_event(connection: sqlite3.Connection, user_id: int, event_type: str,
+                           change: int, reason: str, request_id: int | None = None) -> int:
+    """Move a resident's reliability and record why. Returns the new score."""
+    row = connection.execute("SELECT reliability FROM users WHERE id=?", (user_id,)).fetchone()
+    if not row:
+        return RELIABILITY_START
+    old = row["reliability"] if row["reliability"] is not None else RELIABILITY_START
+    new = max(0, min(100, old + change))
+    if new == old and change != 0:
+        return old
+    connection.execute("UPDATE users SET reliability=? WHERE id=?", (new, user_id))
+    connection.execute(
+        """INSERT INTO reliability_events(user_id,request_id,event_type,score_change,reason,created_at)
+           VALUES (?,?,?,?,?,?)""",
+        (user_id, request_id, event_type, new - old, reason, now()),
+    )
+    if change < 0 and reliability_tier(new) != reliability_tier(old):
+        notify(connection, user_id,
+               f"Your reliability moved to {new}/100 ({reliability_label(new)}). {reason}",
+               "/profile", kind="warning")
+    return new
+
+
+def is_blocked(connection: sqlite3.Connection, a: int, b: int) -> bool:
+    if not a or not b or a == b:
+        return False
+    return bool(connection.execute(
+        "SELECT 1 FROM blocks WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)",
+        (a, b, b, a)).fetchone())
+
+
+def circle_progress(connection: sqlite3.Connection, proposal_id: int) -> dict[str, int]:
+    row = connection.execute(
+        """SELECT COUNT(*) total,
+                  SUM(CASE WHEN r.status IN ('completed','resolved') THEN 1 ELSE 0 END) done
+           FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+           WHERE ct.proposal_id=?""",
+        (proposal_id,),
+    ).fetchone()
+    return {"total": row["total"] or 0, "done": row["done"] or 0}
+
+
+def close_circle_if_complete(connection: sqlite3.Connection, proposal_id: int) -> None:
+    """Mark a Circle complete and celebrate when every linked task is done."""
+    if not proposal_id:
+        return
+    proposal = connection.execute(
+        "SELECT * FROM chain_proposals WHERE id=?", (proposal_id,)).fetchone()
+    if not proposal or proposal["status"] != "active":
+        return
+    progress = circle_progress(connection, proposal_id)
+    if not progress["total"] or progress["done"] < progress["total"]:
+        return
+    connection.execute(
+        "UPDATE chain_proposals SET status='completed', cancelled_at=NULL WHERE id=?",
+        (proposal_id,),
+    )
+    members = connection.execute(
+        "SELECT user_id FROM chain_members WHERE proposal_id=? AND response='accepted'",
+        (proposal_id,)).fetchall()
+    summary = (f"{progress['total']} needs fulfilled · {progress['total']} neighbours helped "
+               f"· 0 credits exchanged")
+    for member in members:
+        notify(connection, member["user_id"],
+               f"Circle complete — {summary}", f"/chains/{proposal_id}", kind="success")
+        apply_reliability_event(
+            connection, member["user_id"], "circle_completed", 1,
+            "You completed your Circle commitment", None)
+
+
+def assign_circle_tasks(connection: sqlite3.Connection, proposal_id: int) -> list[dict[str, Any]]:
+    """Pair each accepted member with a task they are willing to do.
+
+    Preference order: members with the fewest willing helpers get matched first,
+    and nobody is ever assigned their own task. Falls back to the natural
+    rotation when nobody has picked preferences yet.
+    """
+    members = connection.execute(
+        """SELECT cm.user_id, cm.request_id FROM chain_members cm
+           WHERE cm.proposal_id=? AND cm.response='accepted' ORDER BY cm.position""",
+        (proposal_id,),
+    ).fetchall()
+    if len(members) < 2:
+        return []
+    own: dict[int, int] = {m["user_id"]: m["request_id"] for m in members}
+    chosen: dict[int, list[int]] = {
+        m["user_id"]: [
+            row["request_id"] for row in connection.execute(
+                "SELECT request_id FROM chain_interest WHERE proposal_id=? AND user_id=?",
+                (proposal_id, m["user_id"]))
+        ]
+        for m in members
+    }
+    order = [m["user_id"] for m in members]
+    remaining = list(order)
+    remaining.sort(key=lambda uid: len([r for r in chosen.get(uid, []) if r != own[uid]]))
+    taken: set[int] = set()
+    assignment: list[dict[str, Any]] = []
+    for helper in remaining:
+        options = [r for r in chosen.get(helper, []) if r != own[helper] and r not in taken]
+        if not options:
+            options = [m["request_id"] for m in members
+                       if m["request_id"] != own[helper] and m["request_id"] not in taken]
+        if not options:
+            continue
+        task_id = options[0]
+        taken.add(task_id)
+        owner = next(m["user_id"] for m in members if m["request_id"] == task_id)
+        value = connection.execute(
+            "SELECT requester_value FROM requests WHERE id=?", (task_id,)).fetchone()["requester_value"] or 0
+        assignment.append({"request_id": task_id, "helper_id": helper,
+                           "requester_id": owner, "value": value})
+    connection.execute("DELETE FROM chain_tasks WHERE proposal_id=?", (proposal_id,))
+    for row in assignment:
+        connection.execute(
+            """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value)
+               VALUES (?,?,?,?,?)""",
+            (proposal_id, row["request_id"], row["requester_id"], row["helper_id"], row["value"]),
+        )
+    return assignment
 TASK_CATEGORIES = (
     "daily life",
     "education",
@@ -53,6 +320,16 @@ GENRE_EMOJI = {
     "repair & diy": "🔧", "transport": "🚗", "companionship": "🧑‍🤝‍🧑",
     "family & kids": "👶", "pets & animals": "🐶", "community": "🌱",
 }
+# Categories where a photo usually isn't appropriate — the requester's own
+# confirmation is accepted as proof instead.
+NO_EVIDENCE_CATEGORIES = {"education", "companionship"}
+POLICY_VERSION = "2026-10-prototype"
+REPORT_CATEGORIES = (
+    "harassment", "unsafe behaviour", "scam or fraud", "inappropriate task",
+    "illegal activity", "false evidence", "discrimination", "other",
+)
+# Spec 31: Circle candidates must agree within roughly ±2 credits of each other.
+CIRCLE_VALUE_TOLERANCE = 2
 HK_REGIONS = {
     "Hong Kong Island": ["Kennedy Town", "Sai Ying Pun", "Sheung Wan", "Central", "Wan Chai", "Causeway Bay", "North Point", "Quarry Bay", "Tai Koo", "Pok Fu Lam"],
     "Kowloon": ["Tsim Sha Tsui", "Mong Kok", "Yau Ma Tei", "Jordan", "Sham Shui Po", "Kowloon City", "Kwun Tong"],
@@ -254,6 +531,32 @@ def init_db() -> None:
                 sender_id INTEGER, body TEXT NOT NULL, created_at TEXT NOT NULL,
                 FOREIGN KEY(proposal_id) REFERENCES chain_proposals(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS reliability_events (
+                id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, request_id INTEGER,
+                event_type TEXT NOT NULL, score_change INTEGER NOT NULL,
+                reason TEXT NOT NULL, created_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE TABLE IF NOT EXISTS reports (
+                id INTEGER PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'report',
+                reporter_id INTEGER, reported_user_id INTEGER, reported_request_id INTEGER,
+                category TEXT NOT NULL, description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open', resolution TEXT,
+                moderator_id INTEGER, created_at TEXT NOT NULL, resolved_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS blocks (
+                blocker_id INTEGER NOT NULL, blocked_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL, PRIMARY KEY(blocker_id, blocked_id)
+            );
+            CREATE TABLE IF NOT EXISTS consents (
+                id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL,
+                policy TEXT NOT NULL, version TEXT NOT NULL, accepted_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS chain_interest (
+                proposal_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                request_id INTEGER NOT NULL, created_at TEXT NOT NULL,
+                PRIMARY KEY(proposal_id, user_id, request_id)
+            );
             """
         )
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(requests)")}
@@ -272,6 +575,20 @@ def init_db() -> None:
             ("community_helper", "INTEGER NOT NULL DEFAULT 0"),
             ("created_at", "TEXT"),
             ("consent_analytics", "INTEGER NOT NULL DEFAULT 0"),
+            ("reliability", f"INTEGER NOT NULL DEFAULT {RELIABILITY_START}"),
+            ("account_status", "TEXT NOT NULL DEFAULT 'active'"),
+            ("analytics_consent", "INTEGER NOT NULL DEFAULT 0"),
+            ("username", "TEXT"),
+            ("bio", "TEXT"),
+            ("verification_identity", "TEXT NOT NULL DEFAULT 'unverified'"),
+            ("verification_neighbourhood", "TEXT NOT NULL DEFAULT 'unverified'"),
+            ("vis_photo", "INTEGER NOT NULL DEFAULT 1"),
+            ("vis_neighbourhood", "INTEGER NOT NULL DEFAULT 1"),
+            ("vis_skills", "INTEGER NOT NULL DEFAULT 1"),
+            ("vis_bio", "INTEGER NOT NULL DEFAULT 1"),
+            ("vis_completed", "INTEGER NOT NULL DEFAULT 1"),
+            ("vis_circle", "INTEGER NOT NULL DEFAULT 1"),
+            ("circle_enabled", "INTEGER NOT NULL DEFAULT 1"),
         ):
             if column not in user_columns:
                 connection.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
@@ -293,6 +610,12 @@ def init_db() -> None:
             ("dispute_eligible", "INTEGER NOT NULL DEFAULT 1"),
             ("dispute_window_days", "INTEGER NOT NULL DEFAULT 3"),
             ("settlement_value", "INTEGER"),
+            ("circle_id", "INTEGER"),
+            ("cancel_requested_by", "INTEGER"),
+            ("cancel_reason", "TEXT"),
+            ("cancel_compensation", "INTEGER NOT NULL DEFAULT 0"),
+            ("evidence_required", "INTEGER NOT NULL DEFAULT 1"),
+            ("duration_minutes", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in columns:
                 connection.execute(f"ALTER TABLE requests ADD COLUMN {column} {definition}")
@@ -300,9 +623,11 @@ def init_db() -> None:
         if "kind" not in notif_columns:
             connection.execute("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'info'")
         message_columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)")}
-        for column, definition in (("meta", "TEXT"), ("status", "TEXT")):
+        for column, definition in (("meta", "TEXT"), ("status", "TEXT"), ("attachment", "TEXT")):
             if column not in message_columns:
                 connection.execute(f"ALTER TABLE messages ADD COLUMN {column} {definition}")
+        connection.execute(
+            f"UPDATE users SET reliability={RELIABILITY_START} WHERE reliability IS NULL")
         dispute_cols = {row["name"] for row in connection.execute("PRAGMA table_info(disputes)")}
         for column, definition in (
                 ("reason", "TEXT"), ("desired_outcome", "TEXT"),
@@ -517,16 +842,41 @@ def ledger_entry(connection: sqlite3.Connection, user_id: int, request_id: int |
 
 
 def add_message(connection: sqlite3.Connection, request_id: int, sender_id: int | None,
-                kind: str, body: str, meta: str | None = None, status: str | None = None) -> int:
+                kind: str, body: str, meta: str | None = None, status: str | None = None,
+                attachment: str | None = None) -> int:
     cursor = connection.execute(
-        "INSERT INTO messages(request_id,sender_id,kind,body,meta,status,created_at) VALUES (?,?,?,?,?,?,?)",
-        (request_id, sender_id, kind, body, meta, status, now()),
+        """INSERT INTO messages(request_id,sender_id,kind,body,meta,status,attachment,created_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (request_id, sender_id, kind, body, meta, status, attachment, now()),
     )
     return cursor.lastrowid
 
 
+def inspect_image(data: bytes, suffix: str) -> list[str]:
+    """Cheap structural signals that an image may be synthetic or reused.
+
+    These are flags for review, never a fraud verdict.
+    """
+    if suffix not in {".png", ".jpg", ".jpeg"}:
+        return []
+    flags: list[str] = []
+    if len(data) < 12_000 and len(data) > 2_000:
+        flags.append("File is unusually small for a photo, which is common in generated images")
+    exif = data[: 64 * 1024].find(b"Exif\x00\x00")
+    camera_tags = [tag for tag in (b"Android", b"iPhone", b"Canon", b"NIKON", b"samsung")
+                   if tag in data[: 128 * 1024]]
+    if exif == -1 and not camera_tags:
+        flags.append("No camera metadata found, so the photo cannot be linked to a device")
+    return flags
+
+
 def screen_evidence(filename: str, content_type: str | None, data: bytes,
-                    connection: sqlite3.Connection) -> str:
+                    connection: sqlite3.Connection) -> tuple[str, list[str]]:
+    """Validate an upload and return (stored_name, review_flags).
+
+    Hard failures still raise; uncertain signals become reviewable flags so a
+    human decides rather than the system declaring fraud.
+    """
     suffix = Path(filename).suffix.lower()
     allowed = {".png", ".jpg", ".jpeg", ".pdf", ".txt"}
     if suffix not in allowed:
@@ -547,19 +897,25 @@ def screen_evidence(filename: str, content_type: str | None, data: bytes,
     }:
         raise ValueError("Image evidence has an invalid MIME type.")
     digest = hashlib.sha256(data).hexdigest()
+    flags: list[str] = []
     duplicate = connection.execute(
-        "SELECT 1 FROM requests WHERE completion_evidence LIKE ? OR proof_path LIKE ? LIMIT 1",
-        (f"%{digest}%", f"%{digest}%"),
+        """SELECT 1 FROM requests WHERE completion_evidence LIKE ? LIMIT 1""",
+        (f"%{digest}%",),
+    ).fetchone() or connection.execute(
+        """SELECT 1 FROM disputes WHERE evidence_paths LIKE ? LIMIT 1""",
+        (f"%{digest}%",),
     ).fetchone()
     if duplicate:
-        raise ValueError("This evidence file was already submitted.")
+        flags.append("An identical file was submitted before, so this may be reused evidence")
+    flags.extend(inspect_image(data, suffix))
     stored = f"{digest}{suffix}"
     connection.execute(
         """INSERT INTO evidence_audits(filename,stored_path,sha256,mime_type,byte_size,
            screening_status,created_at) VALUES (?,?,?,?,?,?,?)""",
-        (filename, stored, digest, content_type, len(data), "accepted", now()),
+        (filename, stored, digest, content_type, len(data),
+         "requires_review" if flags else "accepted", now()),
     )
-    return stored
+    return stored, flags
 
 
 def negotiation_bounds(item: sqlite3.Row, is_owner: bool) -> tuple[int, int]:
@@ -593,13 +949,21 @@ def detect_circular_matches(connection: sqlite3.Connection, max_size: int = 6) -
     for item in requests:
         by_user.setdefault(item["requester_id"], item)
     candidates = list(by_user.values())
+    blocked_pairs = {
+        (row["blocker_id"], row["blocked_id"]) for row in connection.execute(
+            "SELECT blocker_id, blocked_id FROM blocks")
+    }
+    blocked_pairs |= {(b, a) for a, b in blocked_pairs}
     matches = []
     seen: set[tuple[int, ...]] = set()
     for start in range(len(candidates)):
         for size in range(min(max_size, len(candidates) - start), 2, -1):
             group = candidates[start:start + size]
+            users = [item["requester_id"] for item in group]
+            if any((a, b) in blocked_pairs for a in users for b in users if a != b):
+                continue
             values = [item["requester_value"] or 0 for item in group]
-            if max(values) - min(values) > max(4, round(sum(values) / len(values) * 0.35)):
+            if max(values) - min(values) > CIRCLE_VALUE_TOLERANCE * 2:
                 continue
             request_ids = tuple(item["id"] for item in group)
             if request_ids in seen:
@@ -953,6 +1317,13 @@ def release_due_payments(connection: sqlite3.Connection) -> None:
         (now(),),
     ).fetchall()
     for item in due:
+        if item["circle_id"]:
+            connection.execute(
+                "UPDATE requests SET status='completed', settlement_value=0 WHERE id=?",
+                (item["id"],),
+            )
+            close_circle_if_complete(connection, item["circle_id"])
+            continue
         settle_exchange(
             connection,
             item,
@@ -977,6 +1348,30 @@ def release_due_payments(connection: sqlite3.Connection) -> None:
             f"/requests/{item['id']}",
             kind="success",
         )
+
+
+def record_consent(connection: sqlite3.Connection, user_id: int, policy: str,
+                   version: str | None = None) -> None:
+    connection.execute(
+        "INSERT INTO consents(user_id,policy,version,accepted_at) VALUES (?,?,?,?)",
+        (user_id, policy, version or POLICY_VERSION, now()))
+
+
+def record_completion(connection: sqlite3.Connection, provider_id: int,
+                      request_id: int, title: str) -> None:
+    """Reliability 6.2: completed work earns +1, and every fifth earns a bonus."""
+    apply_reliability_event(connection, provider_id, "task_completed",
+                            RELIABILITY_EVENTS["task_completed"],
+                            f"Completed \"{title}\"", request_id)
+    done = connection.execute(
+        "SELECT COUNT(*) c FROM transactions WHERE provider_id=?", (provider_id,)).fetchone()["c"]
+    awarded = connection.execute(
+        """SELECT COUNT(*) c FROM reliability_events
+           WHERE user_id=? AND event_type='five_task_streak'""", (provider_id,)).fetchone()["c"]
+    if done // 5 > awarded:
+        apply_reliability_event(connection, provider_id, "five_task_streak",
+                                RELIABILITY_EVENTS["five_task_streak"],
+                                "Five completed exchanges in a row", None)
 
 
 def load_history(connection: sqlite3.Connection, user_id: int):
@@ -1061,11 +1456,38 @@ def home(request: Request):
                    WHERE provider_id=? AND status IN ('confirmed','scheduled','in_progress','completion_submitted')""",
                 (user["id"],)).fetchone()["s"],
         }
+        # Spec 10: a Circle banner when compatible needs can form a loop nearby.
+        circle_invite = None
+        if user["circle_enabled"]:
+            circle_invite = connection.execute(
+                """SELECT cp.*, COUNT(cm.user_id) member_count,
+                          COALESCE(SUM(cm.response='accepted'),0) accepted_count
+                   FROM chain_proposals cp JOIN chain_members cm ON cm.proposal_id=cp.id
+                   WHERE cp.status='pending'
+                     AND EXISTS (SELECT 1 FROM chain_members x WHERE x.proposal_id=cp.id
+                                 AND x.user_id=? AND x.response='pending')
+                   GROUP BY cp.id ORDER BY cp.created_at DESC LIMIT 1""",
+                (user["id"],)).fetchone()
+        tier = user_tier(user)
+        score = user_reliability(user)
+        standing = {
+            "score": score,
+            "label": reliability_label(score),
+            "tier": tier,
+            "restricted_cap": RESTRICTED_TASK_VALUE_CAP,
+        }
+        circles_done = connection.execute(
+            """SELECT COUNT(DISTINCT cp.id) c FROM chain_proposals cp
+               JOIN chain_members cm ON cm.proposal_id=cp.id
+               WHERE cm.user_id=? AND cp.status='completed'""", (user["id"],)).fetchone()["c"]
     return render(
         request,
         "dashboard.html",
         page="home",
         active_items=active_items,
+        circle_invite=circle_invite,
+        standing=standing,
+        circles_done=circles_done,
         exchanges=exchanges,
         action_notifs=action_notifs,
         action_count=action_count,
@@ -1085,16 +1507,49 @@ def home(request: Request):
 
 
 @app.get("/history", response_class=HTMLResponse)
-def credit_history(request: Request):
+def credit_history(request: Request, view: str = "all"):
+    """Spec 43: credits page with summary cards and filterable history."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    kinds = {
+        "all": "", "earned": "AND l.amount > 0 AND l.kind IN ('task_payment','welcome_credit')",
+        "spent": "AND l.amount < 0 AND l.kind NOT IN ('refund','cancellation_refund')",
+        "held": "AND l.kind='escrow_hold'",
+        "refunded": "AND l.kind IN ('refund','cancellation_refund')",
+        "bonus": "AND l.kind IN ('kudos_bonus','community_test')",
+    }
+    clause = kinds.get(view, "")
     with db() as connection:
-        ledger = connection.execute(
+        sql = (
             """SELECT l.*, r.title FROM ledger l LEFT JOIN requests r ON r.id=l.request_id
-               WHERE l.user_id=? ORDER BY l.created_at DESC""", (user["id"],)
-        ).fetchall()
-    return render(request, "history.html", page="account", ledger=ledger)
+               WHERE l.user_id=? %s ORDER BY l.created_at DESC""" % clause
+        )
+        ledger = connection.execute(sql, (user["id"],)).fetchall()
+        summary = {
+            "available": user["balance"],
+            "held": user["held_balance"],
+            "starting": 10,
+            "earned": connection.execute(
+                """SELECT COALESCE(SUM(l.amount),0) s FROM ledger l
+                   WHERE l.user_id=? AND l.amount>0 AND l.kind IN ('task_payment','welcome_credit')""",
+                (user["id"],)).fetchone()["s"],
+            "spent": abs(connection.execute(
+                """SELECT COALESCE(SUM(l.amount),0) s FROM ledger l
+                   WHERE l.user_id=? AND l.amount<0
+                     AND l.kind NOT IN ('refund','cancellation_refund')""",
+                (user["id"],)).fetchone()["s"]),
+            "bonus": connection.execute(
+                """SELECT COALESCE(SUM(l.amount),0) s FROM ledger l
+                   WHERE l.user_id=? AND l.kind IN ('kudos_bonus','community_test')""",
+                (user["id"],)).fetchone()["s"],
+            "circle": connection.execute(
+                """SELECT COUNT(DISTINCT cp.id) c FROM chain_proposals cp
+                   JOIN chain_members cm ON cm.proposal_id=cp.id
+                   WHERE cm.user_id=? AND cp.status='completed'""", (user["id"],)).fetchone()["c"],
+        }
+    return render(request, "history.html", page="credits", ledger=ledger,
+                  summary=summary, view=view, views=list(kinds))
 
 
 @app.get("/chain-invitations", response_class=HTMLResponse)
@@ -1154,18 +1609,76 @@ def chain_review(request: Request, proposal_id: int):
                LEFT JOIN users u ON u.id=cm.sender_id
                WHERE proposal_id=? ORDER BY cm.id""", (proposal_id,)).fetchall()
         tasks = connection.execute(
-            """SELECT ct.*, r.title, r.requester_value, u.name requester_name,
-                      h.name helper_name
+            """SELECT ct.*, r.title, r.requester_value, r.status request_status,
+                      u.name requester_name, h.name helper_name
                FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
                JOIN users u ON u.id=ct.requester_id
                JOIN users h ON h.id=ct.helper_id
                WHERE ct.proposal_id=? ORDER BY ct.request_id""",
             (proposal_id,),
         ).fetchall()
+        all_members = connection.execute(
+            """SELECT cm.user_id, cm.request_id, cm.response, cm.position, r.title,
+                      r.description, r.category, r.requester_value, u.name requester_name
+               FROM chain_members cm JOIN requests r ON r.id=cm.request_id
+               JOIN users u ON u.id=cm.user_id
+               WHERE cm.proposal_id=? ORDER BY cm.position""", (proposal_id,)).fetchall()
+        my_interests = {
+            row["request_id"] for row in connection.execute(
+                "SELECT request_id FROM chain_interest WHERE proposal_id=? AND user_id=?",
+                (proposal_id, user["id"]))
+        }
+        progress = circle_progress(connection, proposal_id)
     return render(request, "chain_review.html", proposal=rows[0], members=rows,
-                  tasks=tasks,
+                  tasks=tasks, all_members=all_members, my_interests=my_interests,
+                  my_own_request=next((m["request_id"] for m in rows
+                                       if m["user_id"] == user["id"]), None),
+                  progress=progress,
                   messages=messages, my_response=next(
                       row["response"] for row in rows if row["user_id"] == user["id"]))
+
+
+@app.post("/chains/{proposal_id}/interest")
+def chain_interest(request: Request, proposal_id: int, tasks: list[int] = Form([])):
+    """Record which of the other tasks this resident is willing to help with."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        rows = chain_for_user(connection, proposal_id, user["id"])
+        if not rows or rows[0]["status"] not in ("pending", "active"):
+            return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
+        own = next((row["request_id"] for row in rows if row["user_id"] == user["id"]), None)
+        valid = {row["request_id"] for row in rows}
+        connection.execute(
+            "DELETE FROM chain_interest WHERE proposal_id=? AND user_id=?",
+            (proposal_id, user["id"]))
+        for task_id in tasks[:10]:
+            if task_id in valid and task_id != own:
+                connection.execute(
+                    """INSERT OR IGNORE INTO chain_interest(proposal_id,user_id,request_id,created_at)
+                       VALUES (?,?,?,?)""", (proposal_id, user["id"], task_id, now()))
+        if rows[0]["status"] == "active":
+            refresh_circle_assignment(connection, proposal_id)
+    return redirect_toast(f"/chains/{proposal_id}", "Saved the tasks you can help with")
+
+
+def refresh_circle_assignment(connection: sqlite3.Connection, proposal_id: int) -> None:
+    """Re-run interest-based matching and wire the tasks up to the Circle."""
+    assignment = assign_circle_tasks(connection, proposal_id)
+    for row in assignment:
+        connection.execute(
+            """UPDATE requests
+               SET provider_id=?, status='negotiating', circle_id=?,
+                   negotiation_deadline=?
+               WHERE id=? AND provider_id IS NULL""",
+            (row["helper_id"], proposal_id,
+             (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"),
+             row["request_id"]),
+        )
+        notify(connection, row["helper_id"],
+               "A Circle is forming — open the task you chose to help with.",
+               f"/chat/{row['request_id']}", kind="action")
 
 
 @app.post("/chains/{proposal_id}/respond")
@@ -1189,42 +1702,43 @@ def chain_respond(request: Request, proposal_id: int, response: str = Form(...))
             (proposal_id,),
         ).fetchall()
         if len(accepted_rows) >= 3:
-            connection.execute("DELETE FROM chain_tasks WHERE proposal_id=?", (proposal_id,))
-            for position, member in enumerate(accepted_rows):
-                helper = accepted_rows[(position - 1) % len(accepted_rows)]
-                value = connection.execute(
-                    "SELECT requester_value FROM requests WHERE id=?",
-                    (member["request_id"],),
-                ).fetchone()["requester_value"] or 0
-                connection.execute(
-                    """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value)
-                       VALUES (?,?,?,?,?)""",
-                    (proposal_id, member["request_id"], member["user_id"],
-                     helper["user_id"], value),
-                )
+            connection.execute(
+                "UPDATE chain_proposals SET status='active', activated_at=? WHERE id=?",
+                (now(), proposal_id))
+            assignment = assign_circle_tasks(connection, proposal_id)
+            for row in assignment:
                 connection.execute(
                     """UPDATE requests
                        SET provider_id=?, provider_value=requester_value,
                            provider_buffer=requester_buffer, status='negotiating',
-                           negotiation_deadline=?
+                           circle_id=?, negotiation_deadline=?
                        WHERE id=? AND status='open'""",
-                    (helper["user_id"],
+                    (row["helper_id"], proposal_id,
                      (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"),
-                     member["request_id"]),
+                     row["request_id"]),
                 )
                 notify(
                     connection,
-                    helper["user_id"],
-                    "You were assigned a task in an active chain. Open it to agree the final value.",
-                    f"/chat/{member['request_id']}",
+                    row["helper_id"],
+                    "The Circle activated. You have been matched to a task you said you could help with.",
+                    f"/chat/{row['request_id']}",
                     kind="action",
                 )
-            connection.execute(
-                "UPDATE chain_proposals SET status='active', activated_at=? WHERE id=?",
-                (now(), proposal_id))
+            unassigned = connection.execute(
+                """SELECT m.request_id, m.user_id FROM chain_members m
+                   WHERE m.proposal_id=? AND m.response='accepted'
+                     AND NOT EXISTS (SELECT 1 FROM chain_tasks t
+                                     WHERE t.proposal_id=m.proposal_id
+                                       AND t.request_id=m.request_id)""",
+                (proposal_id,)).fetchall()
+            for member in unassigned:
+                notify(connection, member["user_id"],
+                       "The Circle activated, but nobody has been assigned your task yet. "
+                       "Check who you can help with to complete the loop.",
+                       f"/chains/{proposal_id}", kind="action")
             body = (
-                f"A task chain is active with {len(accepted_rows)} participants. "
-                "Each participant completes one other task; ordinary task safeguards still apply."
+                f"A Circle is active with {len(accepted_rows)} participants. Everyone gives help and "
+                "receives help; no credits move between neighbours."
             )
         elif response == "declined":
             body = (
@@ -1264,9 +1778,54 @@ def chain_leave(request: Request, proposal_id: int):
             for member in connection.execute(
                 "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
                 (proposal_id, user["id"])):
-                notify(connection, member["user_id"], "A participant left the task-chain invitation.",
+                notify(connection, member["user_id"], "A neighbour left this Circle invitation.",
                        f"/chains/{proposal_id}")
+        elif rows and rows[0]["status"] == "active":
+            handle_circle_withdrawal(connection, proposal_id, user["id"])
     return RedirectResponse("/chain-invitations", status_code=303)
+
+
+def handle_circle_withdrawal(connection: sqlite3.Connection, proposal_id: int, user_id: int) -> None:
+    """Spec 39: someone walks away from a live Circle.
+
+    Completed work stays honoured; unmet needs go back on the board; the person
+    who received help but stops giving loses standing.
+    """
+    progress = circle_progress(connection, proposal_id)
+    connection.execute(
+        """UPDATE chain_members SET response='withdrawn', responded_at=?
+           WHERE proposal_id=? AND user_id=?""",
+        (now(), proposal_id, user_id))
+    connection.execute(
+        "DELETE FROM chain_tasks WHERE proposal_id=? AND helper_id=?", (proposal_id, user_id))
+    pending = connection.execute(
+        """SELECT ct.request_id, r.title FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+           WHERE ct.proposal_id=? AND r.status NOT IN ('completed','resolved')""",
+        (proposal_id,)).fetchall()
+    for row in pending:
+        connection.execute(
+            """UPDATE requests SET provider_id=NULL, provider_value=NULL, provider_buffer=NULL,
+                       status='open', circle_id=NULL, negotiation_deadline=NULL WHERE id=?""",
+            (row["request_id"],))
+        notify(connection,
+               connection.execute("SELECT requester_id FROM requests WHERE id=?",
+                                  (row["request_id"],)).fetchone()["requester_id"],
+               f"Your Circle partner withdrew, so \"{row['title']}\" is back on the board to repost.",
+               f"/requests/{row['request_id']}", kind="warning")
+    connection.execute(
+        "UPDATE chain_proposals SET status='dissolved', cancelled_at=? WHERE id=?",
+        (now(), proposal_id))
+    if progress["done"]:
+        apply_reliability_event(
+            connection, user_id, "broken_circle_commitment",
+            RELIABILITY_EVENTS["broken_circle_commitment"],
+            "Withdrew from an active Circle after neighbours had already been helped", None)
+    for member in connection.execute(
+            "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
+            (proposal_id, user_id)):
+        notify(connection, member["user_id"],
+               "A Circle neighbour withdrew. Tasks still open are back on the board and "
+               "completed work stays honoured.", f"/chains/{proposal_id}", kind="warning")
 
 
 @app.post("/chains/{proposal_id}/messages")
@@ -1445,9 +2004,10 @@ def register(
     name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
+    confirm_password: str = Form(""),
+    username: str = Form(""),
     address: str = Form(""),
     district: str = Form(""),
-    hkid: str = Form(""),
     birthday: str = Form(""),
     language: str = Form("en"),
     skills: list[str] = Form([]),
@@ -1456,18 +2016,45 @@ def register(
     consent_guidelines: str | None = Form(None),
     consent_competence: str | None = Form(None),
     consent_analytics: str | None = Form(None),
+    agree_tos: str | None = Form(None),
+    agree_privacy: str | None = Form(None),
+    agree_guidelines: str | None = Form(None),
+    agree_competence: str | None = Form(None),
+    analytics_consent: str | None = Form(None),
 ):
     email = email.strip().lower()
-    if not all([consent_tos, consent_privacy, consent_guidelines, consent_competence]):
-        return render(
-            request,
-            "register.html",
-            error="Please confirm all required consents before creating your account.",
-            skill_tree=SKILL_TREE, genre_emoji=GENRE_EMOJI, hk_regions=HK_REGIONS,
-        )
+    username = username.strip()
+    # The consent screen has shipped under two field-name spellings; accept either
+    # so the flow keeps working whichever version of register.html is live.
+    tos_ok = agree_tos or consent_tos
+    privacy_ok = agree_privacy or consent_privacy
+    guidelines_ok = agree_guidelines or consent_guidelines
+    competence_ok = agree_competence or consent_competence
+    opted_in = 1 if (analytics_consent or consent_analytics) else 0
     district = district.strip()
     if district and district not in HK_DISTRICTS:
         district = ""
+    all_skills = {skill for skills_list in SKILL_TREE.values() for skill in skills_list}
+    skills_clean = [s for s in skills if s in all_skills]
+    missing = [
+        label
+        for value, label in (
+            (tos_ok, "the Terms of Service"),
+            (privacy_ok, "the Privacy Notice"),
+            (guidelines_ok, "the Community Guidelines"),
+            (competence_ok, "the note about provider competence"),
+        )
+        if not value
+    ]
+    if missing:
+        return render(
+            request, "register.html",
+            error="Please accept " + ", ".join(missing) + " to continue.",
+            skill_tree=SKILL_TREE, genre_emoji=GENRE_EMOJI, hk_regions=HK_REGIONS,
+        )
+    if password != confirm_password:
+        return render(request, "register.html", error="The two passwords do not match.",
+                      skill_tree=SKILL_TREE, genre_emoji=GENRE_EMOJI, hk_regions=HK_REGIONS)
     age = None
     if birthday:
         try:
@@ -1476,17 +2063,18 @@ def register(
             age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
         except ValueError:
             age = None
-    all_skills = {skill for skills_list in SKILL_TREE.values() for skill in skills_list}
-    skills_clean = [s for s in skills if s in all_skills]
     with db() as connection:
         try:
             cursor = connection.execute(
                 """INSERT INTO users(name,email,password,balance,is_moderator,language,
-                   address,district,hkid,address_id,age,birthday,skills,created_at,consent_analytics)
-                   VALUES (?,?,?,10,0,?,?,?,?,?,?,?,?,?,?)""",
+                   address,district,hkid,address_id,age,birthday,skills,created_at,
+                   reliability,account_status,analytics_consent,consent_analytics,username,
+                   verification_identity,verification_neighbourhood)
+                   VALUES (?,?,?,10,0,?,?,?,'',?,?,?,?,?,?, 'active',?,?,?,'simulated','verified')""",
                 (name.strip(), email, hash_password(password), language,
-                 address.strip(), district, hkid.strip(), district, age, birthday or None,
-                 ",".join(skills_clean), now(), 1 if consent_analytics else 0),
+                 address.strip(), district, district, age, birthday or None,
+                 ",".join(skills_clean), now(), RELIABILITY_START, opted_in, opted_in,
+                 username or None),
             )
             user_id = cursor.lastrowid
             ledger_entry(connection, user_id, None, "welcome_credit", 10,
@@ -1500,6 +2088,12 @@ def register(
                 error="That email is already registered. Please log in instead.",
                 skill_tree=SKILL_TREE, genre_emoji=GENRE_EMOJI, hk_regions=HK_REGIONS,
             )
+        record_consent(connection, user_id, "tos", tos_ok)
+        record_consent(connection, user_id, "privacy", privacy_ok)
+        record_consent(connection, user_id, "guidelines", guidelines_ok)
+        record_consent(connection, user_id, "competence", competence_ok)
+        if opted_in:
+            record_consent(connection, user_id, "analytics", analytics_consent or consent_analytics)
     request.session["user_id"] = user_id
     return RedirectResponse("/welcome", status_code=303)
 
@@ -1545,21 +2139,38 @@ def account_page(request: Request, saved: str = ""):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        blocked = connection.execute(
+            """SELECT b.blocked_id, u.name FROM blocks b JOIN users u ON u.id=b.blocked_id
+               WHERE b.blocker_id=?""", (user["id"],)).fetchall()
+        consents = connection.execute(
+            "SELECT policy, version, accepted_at FROM consents WHERE user_id=? ORDER BY id DESC",
+            (user["id"],)).fetchall()
     return render(request, "account.html", page="account", genre_emoji=GENRE_EMOJI,
-                  skill_tree=SKILL_TREE, hk_districts=HK_DISTRICTS, saved=saved == "1")
+                  skill_tree=SKILL_TREE, hk_districts=HK_DISTRICTS, saved=saved == "1",
+                  blocked=blocked, consents=consents)
 
 
 @app.post("/account")
 def account_save(
     request: Request,
     name: str = Form(...),
+    username: str = Form(""),
+    bio: str = Form(""),
     address: str = Form(""),
     district: str = Form(""),
-    hkid: str = Form(""),
     age: int | None = Form(None),
     birthday: str = Form(""),
     language: str = Form("en"),
     consent_analytics: str | None = Form(None),
+    analytics_consent: str | None = Form(None),
+    circle_enabled: str | None = Form(None),
+    vis_photo: str | None = Form(None),
+    vis_neighbourhood: str | None = Form(None),
+    vis_skills: str | None = Form(None),
+    vis_bio: str | None = Form(None),
+    vis_completed: str | None = Form(None),
+    vis_circle: str | None = Form(None),
 ):
     user = current_user(request)
     if not user:
@@ -1567,13 +2178,64 @@ def account_save(
     district = district.strip()
     if district and district not in HK_DISTRICTS:
         district = ""
+    opted_in = 1 if (analytics_consent or consent_analytics) else 0
     with db() as connection:
         connection.execute(
-            "UPDATE users SET name=?, address=?, district=?, hkid=?, address_id=?, age=?, birthday=?, language=?, consent_analytics=? WHERE id=?",
-            (name.strip(), address.strip(), district, hkid.strip(), district, age,
-             birthday.strip() or None, language, 1 if consent_analytics else 0, user["id"]),
+            """UPDATE users SET name=?, username=?, bio=?, address=?, district=?, address_id=?,
+                   age=?, birthday=?, language=?, analytics_consent=?, consent_analytics=?,
+                   circle_enabled=?,
+                   vis_photo=?, vis_neighbourhood=?, vis_skills=?, vis_bio=?, vis_completed=?,
+                   vis_circle=? WHERE id=?""",
+            (name.strip(), username.strip() or None, bio.strip() or None, address.strip(),
+             district, district, age, birthday.strip() or None, language, opted_in, opted_in,
+             1 if circle_enabled else 0,
+             1 if vis_photo else 0, 1 if vis_neighbourhood else 0, 1 if vis_skills else 0,
+             1 if vis_bio else 0, 1 if vis_completed else 0, 1 if vis_circle else 0,
+             user["id"]),
         )
+        if opted_in:
+            record_consent(connection, user["id"], "analytics")
     return RedirectResponse("/account?saved=1", status_code=303)
+
+
+@app.get("/profile/{user_id}", response_class=HTMLResponse)
+@app.get("/profile", response_class=HTMLResponse)
+def profile_page(request: Request, user_id: int | None = None):
+    """Spec 41: a public profile whose contents respect the owner's privacy choices."""
+    viewer = current_user(request)
+    if not viewer:
+        return RedirectResponse("/login", status_code=303)
+    target_id = user_id or viewer["id"]
+    with db() as connection:
+        profile = connection.execute("SELECT * FROM users WHERE id=?", (target_id,)).fetchone()
+        if not profile:
+            return render(request, "error.html", message="That profile does not exist.")
+        thumbs = connection.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(kudos_bonus),0) bonus FROM transactions "
+            "WHERE provider_id=? AND kudos_given=1", (target_id,)).fetchone()
+        completed = connection.execute(
+            "SELECT COUNT(*) c FROM transactions WHERE provider_id=?", (target_id,)).fetchone()["c"]
+        circles = connection.execute(
+            """SELECT COUNT(DISTINCT cp.id) c FROM chain_proposals cp
+               JOIN chain_members cm ON cm.proposal_id=cp.id
+               WHERE cm.user_id=? AND cp.status='completed'""", (target_id,)).fetchone()["c"]
+        events = connection.execute(
+            """SELECT * FROM reliability_events WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT 8""",
+            (target_id,)).fetchall()
+        tasks_done = connection.execute(
+            """SELECT t.*, r.title FROM transactions t JOIN requests r ON r.id=t.request_id
+               WHERE t.provider_id=? ORDER BY t.created_at DESC LIMIT 6""",
+            (target_id,)).fetchall()
+        annual_opt_in = connection.execute(
+            "SELECT 1 FROM consents WHERE user_id=? AND policy='analytics' LIMIT 1",
+            (target_id,)).fetchone()
+    owns_profile = target_id == viewer["id"]
+    return render(
+        request, "profile.html", page="profile", profile=profile, owns_profile=owns_profile,
+        thumbs=thumbs, completed=completed, circles=circles, events=events,
+        tasks_done=tasks_done, analytics_opt_in=bool(annual_opt_in),
+        circle_badge=profile["verification_neighbourhood"] == "verified",
+    )
 
 
 @app.get("/community-test", response_class=HTMLResponse)
@@ -1674,6 +2336,9 @@ def chat_page(request: Request, request_id: int):
             (request_id, user["id"]),
         ).fetchone()
         if item and item["status"] == "open" and item["requester_id"] != user["id"] and not is_participant:
+            if is_blocked(connection, user["id"], item["requester_id"]):
+                return render(request, "error.html",
+                              message="You can't join this task — you have blocked this resident.")
             connection.execute(
                 "INSERT OR IGNORE INTO request_participants(request_id,user_id,created_at) VALUES (?,?,?)",
                 (request_id, user["id"], now()),
@@ -1761,10 +2426,12 @@ def chat_feed(request: Request, request_id: int):
 
 
 @app.post("/chat/{request_id}")
-def chat_post(request: Request, request_id: int, body: str = Form(...)):
+async def chat_post(request: Request, request_id: int, body: str = Form(""),
+                    attachment: UploadFile | None = File(None)):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    stored = None
     with db() as connection:
         item = connection.execute("SELECT * FROM requests WHERE id=?", (request_id,)).fetchone()
         participant = connection.execute(
@@ -1775,8 +2442,24 @@ def chat_post(request: Request, request_id: int, body: str = Form(...)):
             user["id"] in (item["requester_id"], item["provider_id"] or 0)
             or (item["status"] == "open" and user["id"] != item["requester_id"] and participant)
         )
-        if allowed and body.strip():
-            add_message(connection, request_id, user["id"], "chat", body.strip())
+        if not allowed:
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        if attachment is not None and attachment.filename:
+            data = await attachment.read()
+            try:
+                stored, _flags = screen_evidence(
+                    attachment.filename, attachment.content_type, data, connection)
+            except ValueError as error:
+                return render(request, "error.html", message=str(error))
+            (UPLOAD_DIR / stored).write_bytes(data)
+        term = find_banned_term(body)
+        if term:
+            return render(request, "error.html", message=(
+                f"Your message wasn't sent — IoU blocks messages containing \"{term}\"."
+            ))
+        if body.strip() or stored:
+            add_message(connection, request_id, user["id"], "chat",
+                        body.strip() or "Sent an attachment", attachment=stored)
     return RedirectResponse(f"/chat/{request_id}", status_code=303)
 
 
@@ -1800,26 +2483,62 @@ def create_request(
     preferred_time: str = Form(""),
     offered_value: int = Form(...),
     offered_buffer: int = Form(...),
+    duration_minutes: int = Form(0),
     confirm_outside_range: str | None = Form(None),
+    confirm_accurate: str | None = Form(None),
 ):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
+    if user_tier(user) == "suspended":
+        return render(request, "error.html", message=(
+            "Your account is suspended, so you cannot post tasks right now. You can still review "
+            "your history, follow open disputes, export your data, or submit an appeal."
+        ))
+    if confirm_accurate != "1":
+        return render(request, "error.html", message=(
+            "Please confirm that your description accurately represents the requested task."
+        ))
+    term = find_banned_term(title, description)
+    if term:
+        return render(request, "error.html", message=(
+            f"This task can't be posted: the word or phrase \"{term}\" is on IoU's prohibited list. "
+            "If you think this is a mistake, rephrase the task and try again."
+        ))
     if user["balance"] <= 0:
         return render(
             request,
             "error.html",
             message=(
                 f"Your available balance is {user['balance']} credits. "
-                "You need a positive balance to post a new request — help a neighbour "
-                "to earn credits back first."
+                "Your balance needs rebalancing — help a neighbour to earn credits back first, "
+                "or join an available Circle."
+            ),
+        )
+    # Spec 7.4: the projected balance after escrow must not fall below the floor.
+    if user["balance"] - max(1, offered_value) < MIN_BALANCE:
+        return render(
+            request,
+            "error.html",
+            message=(
+                f"This request would exceed your {MIN_BALANCE} credit limit: "
+                f"{user['balance']} available − {max(1, offered_value)} credits "
+                f"would leave {user['balance'] - max(1, offered_value)}."
             ),
         )
     category = category.strip().lower()
     if category not in TASK_CATEGORIES:
         return render(request, "error.html", message="Please choose a valid task category.")
     offered_value, offered_buffer = max(1, offered_value), max(0, offered_buffer)
+    if user_tier(user) == "restricted" and offered_value > RESTRICTED_TASK_VALUE_CAP:
+        return render(request, "error.html", message=(
+            f"Your reliability is currently {user_reliability(user)} (Restricted), so the largest "
+            f"task you can post is {RESTRICTED_TASK_VALUE_CAP} credits. Complete tasks successfully "
+            "to restore full privileges."
+        ))
     effort_minutes, complexity = infer_task_attributes(title, description, category)
+    if duration_minutes and 5 <= duration_minutes <= 1440:
+        effort_minutes = duration_minutes
     with db() as connection:
         suggested = recommendation(connection, category, effort_minutes, complexity)
         if (offered_value < suggested["range"][0] or offered_value > suggested["range"][1]) and confirm_outside_range != "1":
@@ -1831,14 +2550,14 @@ def create_request(
         connection.execute(
             """INSERT INTO requests(
                 title,description,category,location,needed_by,urgency,preferred_time,requester_id,
-                requester_value,requester_buffer,effort_minutes,complexity,created_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                requester_value,requester_buffer,effort_minutes,complexity,created_at,duration_minutes
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 title.strip(), description.strip(), category.strip().lower(),
                 location.strip(), needed_by.strip() or None, urgency.strip() or None,
                 preferred_time.strip() or None,
                 user["id"], offered_value, offered_buffer, effort_minutes,
-                complexity, now(),
+                complexity, now(), duration_minutes or 0,
             ),
         )
     return RedirectResponse("/my-posts?posted=1", status_code=303)
@@ -1867,7 +2586,10 @@ def give_kudos(request: Request, request_id: int, next: str = Form(""), tags: li
                 (bonus, item["id"]),
             )
             ledger_entry(connection, item["provider_id"], request_id, "kudos_bonus", bonus,
-                         f"Kudos bonus for {item['request_id']}")
+                         f"Community appreciation bonus for {item['request_id']}")
+            apply_reliability_event(
+                connection, item["provider_id"], "thumbs_up", RELIABILITY_EVENTS["thumbs_up"],
+                "Received a thumbs-up for a completed task", request_id)
             tag_text = f" ({', '.join(tags)})" if tags else ""
             add_message(connection, request_id, None, "system",
                         f"Kudos{tag_text}! The provider received a {bonus} credit bonus.")
@@ -1886,7 +2608,18 @@ def load_request(connection: sqlite3.Connection, request_id: int):
 
 
 def settle_exchange(connection: sqlite3.Connection, item: sqlite3.Row, refund: int, note: str) -> None:
-    """Release escrow: refund goes back to the requester, the rest to the provider."""
+    """Release escrow: refund goes back to the requester, the rest to the provider.
+
+    Circle tasks move no credits at all — that is the whole point of a Circle.
+    """
+    if item["circle_id"]:
+        connection.execute(
+            "UPDATE requests SET status='completed', settlement_value=0 WHERE id=?",
+            (item["id"],),
+        )
+        record_completion(connection, item["provider_id"], item["id"], item["title"])
+        close_circle_if_complete(connection, item["circle_id"])
+        return
     agreed = item["agreed_value"] or 0
     refund = max(0, min(refund, agreed))
     provider_gets = agreed - refund
@@ -1909,6 +2642,7 @@ def settle_exchange(connection: sqlite3.Connection, item: sqlite3.Row, refund: i
         (item["id"], item["requester_id"], item["provider_id"], agreed,
          item["effort_minutes"], item["complexity"], item["quality_score"], now()),
     )
+    record_completion(connection, item["provider_id"], item["id"], item["title"])
 
 
 @app.get("/requests/{request_id}", response_class=HTMLResponse)
@@ -1938,6 +2672,12 @@ def request_detail(request: Request, request_id: int):
         dispute = connection.execute(
             "SELECT * FROM disputes WHERE request_id=?", (request_id,)
         ).fetchone()
+        requester_profile = connection.execute(
+            "SELECT id,name,reliability,district FROM users WHERE id=?",
+            (item["requester_id"],)).fetchone()
+        requester_thumbs = connection.execute(
+            "SELECT COUNT(*) c FROM transactions WHERE provider_id=? AND kudos_given=1",
+            (item["requester_id"],)).fetchone()["c"]
     is_owner = item["requester_id"] == user["id"]
     is_provider = item["provider_id"] == user["id"]
     involved = is_owner or is_provider
@@ -1958,6 +2698,8 @@ def request_detail(request: Request, request_id: int):
         is_provider=is_provider,
         involved=involved,
         my_confirm=my_confirm,
+        requester_profile=requester_profile,
+        requester_thumbs=requester_thumbs,
         hero=hero,
         status_label=STATUS_LABELS.get(item["status"], item["status"]),
         step_index=STATUS_STEP.get(item["status"], 0),
@@ -2134,6 +2876,13 @@ def accept_offer(request: Request, message_id: int):
         if user["id"] not in (item["requester_id"], item["provider_id"] or 0):
             return RedirectResponse(f"/requests/{offer['request_id']}", status_code=303)
         amount = json.loads(offer["meta"] or "{}").get("amount", item["requester_value"])
+        if (user["id"] == item["provider_id"] and user_tier(user) != "normal"
+                and amount > RESTRICTED_TASK_VALUE_CAP):
+            return render(request, "error.html", message=(
+                f"Your reliability is {user_reliability(user)}, so you cannot accept a task worth "
+                f"more than {RESTRICTED_TASK_VALUE_CAP} credits. Finish successful tasks to restore "
+                "full privileges."
+            ))
         connection.execute("UPDATE messages SET status='accepted' WHERE id=?", (message_id,))
         flag = "confirm_requester" if item["requester_id"] == user["id"] else "confirm_provider"
         connection.execute(
@@ -2190,28 +2939,34 @@ def confirm_exchange(request: Request, request_id: int):
         item = load_request(connection, request_id)
         if item["confirm_requester"] and item["confirm_provider"]:
             agreed = item["agreed_value"]
-            requester = connection.execute("SELECT balance FROM users WHERE id=?",
-                                           (item["requester_id"],)).fetchone()
-            if requester["balance"] < 0:
-                return render(request, "error.html", message=(
-                    f"The requester's balance is negative ({requester['balance']} credits). "
-                    "They need to earn credits back above 0 before starting a new exchange."
-                ))
-            if requester["balance"] - agreed < MIN_BALANCE:
-                return render(request, "error.html", message=(
-                    f"The requester doesn't have enough available credits for this exchange "
-                    f"({requester['balance']} available, {agreed} needed, floor is {MIN_BALANCE}). Please renegotiate a lower value in the chat."
-                ))
-            connection.execute(
-                "UPDATE users SET balance=balance-?, held_balance=held_balance+? WHERE id=?",
-                (agreed, agreed, item["requester_id"]),
-            )
-            ledger_entry(connection, item["requester_id"], request_id, "escrow_hold", -agreed,
-                         f"Escrow hold for {item['title']}")
+            in_circle = bool(item["circle_id"])
+            if not in_circle:
+                requester = connection.execute("SELECT balance FROM users WHERE id=?",
+                                               (item["requester_id"],)).fetchone()
+                if requester["balance"] < 0:
+                    return render(request, "error.html", message=(
+                        f"The requester's balance is negative ({requester['balance']} credits). "
+                        "They need to earn credits back above 0 before starting a new exchange."
+                    ))
+                if requester["balance"] - agreed < MIN_BALANCE:
+                    return render(request, "error.html", message=(
+                        f"The requester doesn't have enough available credits for this exchange "
+                        f"({requester['balance']} available, {agreed} needed, floor is {MIN_BALANCE}). Please renegotiate a lower value in the chat."
+                    ))
+                connection.execute(
+                    "UPDATE users SET balance=balance-?, held_balance=held_balance+? WHERE id=?",
+                    (agreed, agreed, item["requester_id"]),
+                )
+                ledger_entry(connection, item["requester_id"], request_id, "escrow_hold", -agreed,
+                             f"Escrow hold for {item['title']}")
             add_message(connection, request_id, None, "system",
                         "Exchange confirmed by both participants.")
-            add_message(connection, request_id, None, "system",
-                        f"Credits are now in escrow ({agreed} credits held).")
+            add_message(
+                connection, request_id, None, "system",
+                "This task is part of a Circle — no credits are held and none will be exchanged."
+                if in_circle else
+                f"Credits are now in escrow ({agreed} credits held).",
+            )
             if item["preferred_time"]:
                 dt = item["preferred_time"]
                 date_part, _, time_part = dt.partition("T")
@@ -2222,14 +2977,18 @@ def confirm_exchange(request: Request, request_id: int):
                 add_message(connection, request_id, None, "system",
                             f"Meeting fixed from the request: {date_part} at {time_part or 'flexible time'}, {item['location'] or 'location TBD'}.")
                 notify(connection, other_party(item, user["id"]),
-                       "Exchange confirmed — credits are in escrow. The meetup time is already fixed.",
+                       "Circle agreement confirmed — no credits are exchanged." if in_circle
+                       else "Exchange confirmed — credits are in escrow. The meetup time is already fixed.",
                        f"/requests/{request_id}", kind="success")
             else:
                 connection.execute("UPDATE requests SET status='confirmed' WHERE id=?", (request_id,))
                 notify(connection, other_party(item, user["id"]),
-                       "Exchange confirmed — credits are in escrow. Time to schedule the task.",
+                       "Circle agreement confirmed — no credits move." if in_circle
+                       else "Exchange confirmed — credits are in escrow. Time to schedule the task.",
                        f"/requests/{request_id}", kind="success")
-    return redirect_toast(f"/chat/{request_id}", "Exchange confirmed — credits are in escrow")
+    return redirect_toast(f"/chat/{request_id}",
+                          "Circle agreement confirmed — no credits exchanged"
+                          if item["circle_id"] else "Exchange confirmed — credits are in escrow")
 
 
 @app.post("/requests/{request_id}/meetup")
@@ -2326,7 +3085,7 @@ async def complete_submit(request: Request, request_id: int, note: str = Form(""
         return RedirectResponse("/login", status_code=303)
     if confirm_done != "1":
         return render(request, "error.html", message="Please tick the confirmation checkbox before submitting.")
-    paths = []
+    paths, review_flags = [], []
     with db() as connection:
         # Validate the exchange first: screening records the file digest, so a
         # rejected submit would otherwise burn the file and orphan it on disk.
@@ -2338,24 +3097,42 @@ async def complete_submit(request: Request, request_id: int, note: str = Form(""
                 continue
             try:
                 data = await upload.read()
-                filename = screen_evidence(
+                filename, flags = screen_evidence(
                     upload.filename, upload.content_type, data, connection
                 )
             except ValueError as error:
                 return render(request, "error.html", message=str(error))
             (UPLOAD_DIR / filename).write_bytes(data)
             paths.append(filename)
-        if not paths:
+            review_flags.extend(f"{upload.filename}: {flag}" for flag in flags)
+        proof_optional = item["category"] in NO_EVIDENCE_CATEGORIES
+        if not paths and not proof_optional:
             return render(
                 request,
                 "error.html",
                 message="Please attach at least one completion evidence file (PNG, JPG, PDF, or TXT, up to 5MB).",
             )
         connection.execute(
-            "UPDATE requests SET status='completion_submitted', completion_note=?, completion_evidence=? WHERE id=?",
-            (note.strip(), json.dumps(paths), request_id))
+            """UPDATE requests
+               SET status='completion_submitted', completion_note=?, completion_evidence=?,
+                   proof_status=?, evidence_required=?
+               WHERE id=?""",
+            (note.strip(), json.dumps(paths),
+             "requires_review" if review_flags else "accepted",
+             0 if proof_optional and not paths else 1,
+             request_id),
+        )
         add_message(connection, request_id, None, "system",
                     "Task completion has been submitted for review.")
+        if review_flags:
+            add_message(
+                connection, request_id, None, "system",
+                "Evidence requires review — " + "; ".join(review_flags) +
+                " This is a flag for a human to look at, not a conclusion.",
+            )
+        elif paths:
+            add_message(connection, request_id, None, "system",
+                        "Evidence passed the automated integrity checks.")
         notify(connection, item["requester_id"],
                f"The task \"{item['title']}\" has been marked as completed. Please review it.",
                f"/requests/{request_id}/review", kind="action")
@@ -2431,24 +3208,20 @@ async def dispute_submit(request: Request, request_id: int, reason: str = Form(.
         item = load_request(connection, request_id)
         if not item or item["requester_id"] != user["id"] or item["status"] != "completion_submitted":
             return RedirectResponse(f"/requests/{request_id}", status_code=303)
-        paths = []
+        paths, review_flags = [], []
         for upload in evidence[:5]:
             if upload.filename:
                 data = await upload.read()
                 try:
-                    path = screen_evidence(upload.filename, upload.content_type, data, connection)
+                    path, flags = screen_evidence(upload.filename, upload.content_type, data, connection)
                 except ValueError as error:
                     return render(request, "error.html", message=str(error))
                 (UPLOAD_DIR / path).write_bytes(data)
                 paths.append(path)
-        if not paths:
-            return render(request, "error.html",
-                          message="Please attach evidence (png, jpg, pdf or txt, up to 5MB) to open a dispute.")
+                review_flags.extend(f"{upload.filename}: {flag}" for flag in flags)
         refund = max(0, min(refund_amount, item["agreed_value"]))
         if desired_outcome == "full":
             refund = item["agreed_value"]
-        midpoint, spread = comparable_stats(connection, item["category"])
-        rec_text = f"Agreed value {item['agreed_value']} credits; recent band {midpoint - spread}-{midpoint + spread}."
         negotiation_deadline = (
             datetime.now(timezone.utc) + DISPUTE_NEGOTIATION_WINDOW
         ).isoformat(timespec="seconds")
@@ -2457,7 +3230,10 @@ async def dispute_submit(request: Request, request_id: int, reason: str = Form(.
                request_id,opened_by,description,evidence_path,evidence_paths,recommendation,
                requested_refund_amount,reason,desired_outcome,negotiation_status,negotiation_deadline)
                VALUES (?,?,?,?,?,?,?,?,?,'open',?)""",
-            (request_id, user["id"], description.strip(), paths[0], json.dumps(paths), rec_text,
+            (request_id, user["id"], description.strip(),
+             paths[0] if paths else None, json.dumps(paths),
+             "Evidence requires review — " + "; ".join(review_flags) if review_flags else
+             "Evidence passed the automated integrity checks.",
              refund, reason, desired_outcome, negotiation_deadline),
         )
         connection.execute("UPDATE requests SET status='disputed' WHERE id=?", (request_id,))
@@ -2841,20 +3617,177 @@ def toggle_pin(request: Request, request_id: int, next: str = Form("")):
 
 
 @app.post("/requests/{request_id}/cancel")
-def cancel_request(request: Request, request_id: int):
+def cancel_request(request: Request, request_id: int, reason: str = Form("")):
+    """Spec 21 — cancellation is requested, not unilateral, once two sides are involved."""
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         item = load_request(connection, request_id)
-        if item and item["requester_id"] == user["id"] and item["status"] == "open":
-            # Soft-cancel: messages/participants reference this request, and
-            # deleting the row would violate their foreign keys.
+        if not item:
+            return RedirectResponse("/my-posts", status_code=303)
+        involved = user["id"] in (item["requester_id"], item["provider_id"] or 0)
+        if not involved or item["status"] in ("completed", "resolved", "cancelled"):
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        if item["status"] in ("disputed", "mediation", "human_review"):
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        other = other_party(item, user["id"])
+        # Nobody has committed yet — the requester can simply withdraw the post.
+        if not other and item["requester_id"] == user["id"]:
             connection.execute(
                 "UPDATE requests SET status='cancelled' WHERE id=?", (request_id,))
             add_message(connection, request_id, None, "system",
-                        "The requester cancelled this task.")
-    return RedirectResponse("/my-posts", status_code=303)
+                        "The requester withdrew this request before anyone committed.")
+            return redirect_toast("/my-posts", "Request withdrawn")
+        label = "the requester" if item["requester_id"] == user["id"] else "the helper"
+        connection.execute(
+            """UPDATE requests
+               SET cancel_requested_by=?, cancel_reason=?, cancel_compensation=0
+               WHERE id=?""",
+            (user["id"], reason.strip(), request_id))
+        add_message(connection, request_id, None, "system",
+                    f"Cancellation requested by {label}. Waiting for the other participant to agree.")
+        notify(connection, other,
+               f"Cancellation requested for \"{item['title']}\". Agree to cancel or discuss it first.",
+               f"/requests/{request_id}", kind="action")
+    return redirect_toast(f"/requests/{request_id}", "Cancellation request sent")
+
+
+@app.post("/requests/{request_id}/cancel/respond")
+def cancel_respond(request: Request, request_id: int, action: str = Form(...),
+                   compensation: int = Form(0)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        item = load_request(connection, request_id)
+        if not item or item["cancel_requested_by"] in (None, user["id"]):
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        initiator = item["cancel_requested_by"]
+        if action == "discuss":
+            notify(connection, initiator,
+                   f"Your cancellation request for \"{item['title']}\" was not agreed yet — "
+                   "the other participant wants to talk first.",
+                   f"/chat/{request_id}", kind="info")
+            return redirect_toast(f"/chat/{request_id}", "Open the chat to discuss the cancellation")
+        if action == "compensation":
+            hold = item["settlement_value"] or item["agreed_value"] or 0
+            amount = max(0, min(compensation, hold))
+            if not amount:
+                return redirect_toast(f"/requests/{request_id}", "Enter the credits you're asking for")
+            connection.execute(
+                "UPDATE requests SET cancel_compensation=? WHERE id=?", (amount, request_id))
+            add_message(connection, request_id, None, "system",
+                        f"Compensation requested: {amount} credits to finish this cancellation.")
+            notify(connection, initiator,
+                   f"The other participant asked for {amount} credits to agree to cancelling "
+                   f"\"{item['title']}\".", f"/requests/{request_id}", kind="action")
+            return redirect_toast(f"/requests/{request_id}", f"Asked for {amount} credits")
+        if action == "agree":
+            amount = item["cancel_compensation"] or 0
+            _finalise_cancellation(connection, item, mutual=True)
+            return redirect_toast("/messages", "Cancellation agreed")
+    return RedirectResponse(f"/requests/{request_id}", status_code=303)
+
+
+@app.post("/requests/{request_id}/cancel/compensation")
+def cancel_compensation(request: Request, request_id: int, action: str = Form(...)):
+    """Accept, counter or escalate a compensation claim attached to a cancellation."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        item = load_request(connection, request_id)
+        if not item or item["cancel_requested_by"] != user["id"]:
+            return RedirectResponse(f"/requests/{request_id}", status_code=303)
+        amount = item["cancel_compensation"] or 0
+        if action == "accept":
+            _finalise_cancellation(connection, item, mutual=True, compensation=amount)
+            return redirect_toast("/messages", f"Cancellation agreed with {amount} credits compensation")
+        if action == "escalate":
+            connection.execute(
+                "UPDATE requests SET cancel_compensation=0 WHERE id=?", (request_id,))
+            open_cancellation_dispute(connection, item, user["id"], amount)
+            return redirect_toast(f"/requests/{request_id}/mediation",
+                                  "Escalated to a fair resolution")
+        connection.execute(
+            "UPDATE requests SET cancel_compensation=0 WHERE id=?", (request_id,))
+        notify(connection, other_party(item, user["id"]),
+               f"Your compensation request for \"{item['title']}\" was declined. Discuss it in chat "
+               "or escalate it to IoU.", f"/requests/{request_id}", kind="warning")
+    return redirect_toast(f"/requests/{request_id}", "Compensation request declined")
+
+
+def _finalise_cancellation(connection: sqlite3.Connection, item: sqlite3.Row,
+                           mutual: bool, compensation: int = 0) -> None:
+    """Release anything held and record the reliability consequence."""
+    held = item["settlement_value"] or item["agreed_value"] or 0
+    request_id = item["id"]
+    requester_id, provider_id = item["requester_id"], item["provider_id"]
+    if compensation and provider_id:
+        connection.execute(
+            "UPDATE users SET held_balance=MAX(0, held_balance-?) WHERE id=?",
+            (held, requester_id))
+        connection.execute(
+            "UPDATE users SET balance=balance+? WHERE id=?", (compensation, provider_id))
+        connection.execute(
+            "UPDATE users SET balance=balance+? WHERE id=?",
+            (max(0, held - compensation), requester_id))
+        if compensation:
+            ledger_entry(connection, provider_id, request_id, "cancellation_compensation",
+                         compensation, f"Compensation for cancelling {item['title']}")
+        refund = max(0, held - compensation)
+        if refund:
+            ledger_entry(connection, requester_id, request_id, "cancellation_refund", refund,
+                         f"Credits returned for cancelled task {item['title']}")
+    elif held:
+        connection.execute(
+            "UPDATE users SET held_balance=MAX(0, held_balance-?) WHERE id=?",
+            (held, requester_id))
+        connection.execute(
+            "UPDATE users SET balance=balance+? WHERE id=?", (held, requester_id))
+        ledger_entry(connection, requester_id, request_id, "cancellation_refund", held,
+                     f"Credits returned for cancelled task {item['title']}")
+    connection.execute(
+        """UPDATE requests SET status='cancelled', cancel_compensation=?,
+               cancel_requested_by=NULL WHERE id=?""",
+        (compensation, request_id))
+    add_message(connection, request_id, None, "system",
+                "Both participants agreed to cancel this task. No reliability penalty applies."
+                if mutual else "This request was cancelled.")
+    for participant in {requester_id, provider_id} - {None}:
+        notify(connection, participant,
+               f"\"{item['title']}\" was cancelled by agreement.",
+               f"/requests/{request_id}", kind="info")
+    if not mutual and provider_id:
+        apply_reliability_event(
+            connection, item["cancel_requested_by"] or requester_id, "late_cancellation",
+            RELIABILITY_EVENTS["late_cancellation"],
+            "Cancelled after the other participant had already committed", request_id)
+
+
+def open_cancellation_dispute(connection: sqlite3.Connection, item: sqlite3.Row,
+                              opened_by: int, amount: int) -> None:
+    """Route an unresolved cancellation compensation through the normal ladder."""
+    negotiation_deadline = (
+        datetime.now(timezone.utc) + DISPUTE_NEGOTIATION_WINDOW
+    ).isoformat(timespec="seconds")
+    connection.execute(
+        """INSERT OR REPLACE INTO disputes(
+               request_id,opened_by,description,reason,desired_outcome,
+               requested_refund_amount,negotiation_status,negotiation_deadline,recommendation)
+           VALUES (?,?,?,?,?,?,'open',?,?)""",
+        (item["id"], opened_by,
+         f"Cancellation compensation under discussion — {amount} credits were requested.",
+         "cancellation", "partial", amount, negotiation_deadline,
+         "Agreed task value; this dispute is about cancelling it fairly."),
+    )
+    connection.execute("UPDATE requests SET status='disputed' WHERE id=?", (item["id"],))
+    add_message(connection, item["id"], None, "system",
+                "The cancellation could not be agreed, so it entered IoU's resolution process.")
+    notify(connection, other_party(item, opened_by),
+           "A cancellation disagreement needs a joint resolution.",
+           f"/requests/{item['id']}", kind="action")
 
 
 @app.get("/notifications/{notification_id}/go")
@@ -2896,3 +3829,235 @@ def estimate(
             max(1, min(5, quality_score)),
         )
     return {"category": category, **result}
+
+
+# ---------------------------------------------------------------------------
+# Legal, consent and data rights (spec 4, 51-56)
+# ---------------------------------------------------------------------------
+@app.get("/legal/{slug}", response_class=HTMLResponse)
+def legal_page(request: Request, slug: str):
+    doc = LEGAL_DOCS.get(slug)
+    if not doc:
+        return render(request, "error.html", message="That policy page does not exist.")
+    return render(request, "legal.html", page="legal", slug=slug,
+                  title=doc[0], sections=doc[1], policy_version=POLICY_VERSION)
+
+
+@app.get("/legal", response_class=HTMLResponse)
+def legal_index(request: Request):
+    return render(request, "legal.html", page="legal", slug="index",
+                  title="Policies & agreements",
+                  sections=[(title, summary) for _, doc in LEGAL_DOCS.items()
+                            for title, summary in [doc[1][0]]],
+                  policy_version=POLICY_VERSION, index=[
+                      (slug, doc[0]) for slug, doc in LEGAL_DOCS.items()])
+
+
+@app.get("/download-my-data")
+def download_my_data(request: Request):
+    """Spec 55: export everything IoU holds about this resident."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        payload = {
+            "account": {
+                "name": user["name"], "username": user["username"], "email": user["email"],
+                "district": user["district"], "neighbourhood": user["address"],
+                "age": user["age"], "bio": user["bio"],
+                "skills": [s for s in (user["skills"] or "").split(",") if s],
+                "created_at": user["created_at"],
+                "reliability": user["reliability"],
+                "analytics_consent": bool(user["analytics_consent"]),
+                "verification_identity": user["verification_identity"],
+                "verification_neighbourhood": user["verification_neighbourhood"],
+            },
+            "credits": {"balance": user["balance"], "held": user["held_balance"]},
+            "ledger": [dict(r) for r in connection.execute(
+                "SELECT * FROM ledger WHERE user_id=? ORDER BY created_at", (user["id"],))],
+            "tasks": [dict(r) for r in connection.execute(
+                "SELECT id,title,description,category,location,status,requester_value,"
+                "agreed_value,created_at FROM requests WHERE requester_id=?", (user["id"],))],
+            "tasks_helped": [dict(r) for r in connection.execute(
+                "SELECT id,title,status,agreed_value,created_at FROM requests WHERE provider_id=?",
+                (user["id"],))],
+            "reliability_events": [dict(r) for r in connection.execute(
+                "SELECT * FROM reliability_events WHERE user_id=? ORDER BY created_at",
+                (user["id"],))],
+            "circle_participation": [dict(r) for r in connection.execute(
+                """SELECT cp.id, cp.status, cp.created_at FROM chain_proposals cp
+                   JOIN chain_members cm ON cm.proposal_id=cp.id WHERE cm.user_id=?""",
+                (user["id"],))],
+            "privacy_settings": {key: bool(user[key]) for key in (
+                "vis_photo", "vis_neighbourhood", "vis_skills", "vis_bio",
+                "vis_completed", "vis_circle", "analytics_consent", "circle_enabled")},
+            "consents": [dict(r) for r in connection.execute(
+                "SELECT policy,version,accepted_at FROM consents WHERE user_id=?", (user["id"],))],
+        }
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": "attachment; filename=iou-my-data.json"},
+    )
+
+
+@app.post("/delete-account")
+def delete_account(request: Request, password: str = Form(...), confirm: str = Form("")):
+    """Spec 56: deactivate the account without breaking the ledger."""
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if confirm.strip().upper() != "DELETE" or not verify_password(password, user["password"]):
+        return render(request, "error.html",
+                      message="Type DELETE and re-enter your password to confirm deletion.")
+    with db() as connection:
+        connection.execute(
+            "UPDATE users SET name='Deleted resident', email=?, password=?, bio=NULL, "
+            "skills='', username=NULL, address=NULL, account_status='suspended', "
+            "reliability=0, vis_photo=0, vis_neighbourhood=0, vis_skills=0, vis_bio=0 "
+            "WHERE id=?",
+            (f"deleted-{user['id']}@example.invalid", hash_password(secrets.token_urlsafe(16)),
+             user["id"]),
+        )
+    request.session.clear()
+    return RedirectResponse("/login?deleted=1", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Safety: reports, blocks and appeals (spec 47, 48, 57)
+# ---------------------------------------------------------------------------
+@app.get("/report", response_class=HTMLResponse)
+def report_page(request: Request, user_id: int = 0, request_id: int = 0):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    return render(request, "report.html", reported_user_id=user_id or None,
+                  reported_request_id=request_id or None,
+                  categories=REPORT_CATEGORIES)
+
+
+@app.post("/report")
+def submit_report(request: Request, category: str = Form(...), description: str = Form(...),
+                  reported_user_id: int = Form(0), reported_request_id: int = Form(0)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    if category not in REPORT_CATEGORIES:
+        return render(request, "error.html", message="Please choose a valid report category.")
+    if not reported_user_id and not reported_request_id:
+        return render(request, "error.html", message="Nothing to report.")
+    with db() as connection:
+        connection.execute(
+            """INSERT INTO reports(reporter_id,reported_user_id,reported_request_id,
+                   category,description,created_at) VALUES (?,?,?,?,?,?)""",
+            (user["id"], reported_user_id or None, reported_request_id or None,
+             category, description.strip(), now()))
+        for row in connection.execute("SELECT id FROM users WHERE is_moderator=1"):
+            notify(connection, row["id"], "A new report needs review.",
+                   "/moderator/reports", kind="action")
+    return redirect_toast("/browse" if not reported_request_id else f"/requests/{reported_request_id}",
+                          "Report sent to the moderators")
+
+
+@app.post("/users/{user_id}/block")
+def block_user(request: Request, user_id: int, next: str = Form("")):
+    user = current_user(request)
+    if not user or user_id == user["id"]:
+        return RedirectResponse("/login" if not user else next or "/", status_code=303)
+    with db() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO blocks(blocker_id,blocked_id,created_at) VALUES (?,?,?)",
+            (user["id"], user_id, now()))
+    return redirect_back(next, "/account")
+
+
+@app.post("/users/{user_id}/unblock")
+def unblock_user(request: Request, user_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        connection.execute(
+            "DELETE FROM blocks WHERE blocker_id=? AND blocked_id=?", (user["id"], user_id))
+    return RedirectResponse("/account", status_code=303)
+
+
+@app.post("/appeal")
+def submit_appeal(request: Request, description: str = Form(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        connection.execute(
+            """INSERT INTO reports(kind,reporter_id,reported_user_id,category,description,created_at)
+               VALUES ('appeal',?,?,'reliability_appeal',?,?)""",
+            (user["id"], user["id"], description.strip(), now()))
+        for row in connection.execute("SELECT id FROM users WHERE is_moderator=1"):
+            notify(connection, row["id"], "A resident appealed an account restriction.",
+                   "/moderator/reports", kind="action")
+    return redirect_toast("/account", "Appeal submitted — a moderator will review it")
+
+
+# ---------------------------------------------------------------------------
+# Moderator workspace (spec 57)
+# ---------------------------------------------------------------------------
+@app.get("/moderator/reports", response_class=HTMLResponse)
+def moderator_reports(request: Request):
+    user = current_user(request)
+    if not user or not user["is_moderator"]:
+        return RedirectResponse("/" if user else "/login", status_code=303)
+    with db() as connection:
+        reports = connection.execute(
+            """SELECT rp.*, ru.name reporter_name, du.name reported_name, rq.title request_title
+               FROM reports rp LEFT JOIN users ru ON ru.id=rp.reporter_id
+               LEFT JOIN users du ON du.id=rp.reported_user_id
+               LEFT JOIN requests rq ON rq.id=rp.reported_request_id
+               ORDER BY (rp.status='open') DESC, rp.id DESC""").fetchall()
+        appeals = [row for row in reports if row["kind"] == "appeal"]
+    return render(request, "moderator_reports.html", page="moderator", reports=reports,
+                  appeals=appeals, categories=REPORT_CATEGORIES)
+
+
+@app.post("/moderator/reports/{report_id}/resolve")
+def resolve_report(request: Request, report_id: int, resolution: str = Form(...),
+                   note: str = Form("")):
+    user = current_user(request)
+    if not user or not user["is_moderator"]:
+        return RedirectResponse("/" if user else "/login", status_code=303)
+    with db() as connection:
+        report = connection.execute("SELECT * FROM reports WHERE id=?", (report_id,)).fetchone()
+        if not report or report["status"] != "open":
+            return RedirectResponse("/moderator/reports", status_code=303)
+        target = report["reported_user_id"]
+        detail = note.strip() or f"Moderator action: {resolution}"
+        if resolution == "dismiss":
+            pass
+        elif resolution == "warning":
+            apply_reliability_event(connection, target, "guideline_violation",
+                                    RELIABILITY_EVENTS["guideline_violation"], detail, None)
+        elif resolution == "fraud_evidence":
+            apply_reliability_event(connection, target, "fraudulent_evidence",
+                                    RELIABILITY_EVENTS["fraudulent_evidence"], detail, None)
+        elif resolution == "restrict":
+            connection.execute("UPDATE users SET reliability=MIN(reliability, 25) WHERE id=?", (target,))
+            apply_reliability_event(connection, target, "serious_failure",
+                                    RELIABILITY_EVENTS["serious_failure"], detail, None)
+        elif resolution == "suspend":
+            connection.execute(
+                "UPDATE users SET account_status='suspended' WHERE id=?", (target,))
+            apply_reliability_event(connection, target, "serious_failure",
+                                    RELIABILITY_EVENTS["serious_failure"], detail, None)
+        elif resolution == "restore":
+            connection.execute(
+                "UPDATE users SET account_status='active', reliability=MAX(reliability, 60) "
+                "WHERE id=?", (target,))
+            apply_reliability_event(connection, target, "appeal_upheld", 20,
+                                    "Appeal upheld — standing restored", None)
+        connection.execute(
+            """UPDATE reports SET status='resolved', resolution=?, moderator_id=?, resolved_at=?
+               WHERE id=?""",
+            (resolution, user["id"], now(), report_id))
+        if report["kind"] == "appeal":
+            notify(connection, report["reporter_id"],
+                   f"Your appeal was reviewed — outcome: {resolution.replace('_', ' ')}.",
+                   "/account", kind="success")
+    return redirect_toast("/moderator/reports", "Report resolved")

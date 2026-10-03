@@ -84,12 +84,28 @@
   {% elif item.status == 'human_review' %}
   <span class="toolbar-note">A community moderator is making the final decision. Credits stay frozen.</span>
   {% endif %}
+  {% if item.cancel_requested_by and involved %}
+  <span class="toolbar-note">Cancellation requested — agree, discuss, or ask for compensation on the task page.</span>
+  {% endif %}
 </div>
 
-<form class="chat-input" method="post" action="/chat/{{ item.id }}">
-  <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status in ('disputed','mediation') %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off" required>
+<form class="chat-input" method="post" action="/chat/{{ item.id }}" enctype="multipart/form-data">
+  <label class="attach-btn" title="Attach an image or document">
+    <input type="file" name="attachment" accept=".png,.jpg,.jpeg,.pdf,.txt" id="attach-input" hidden>
+    📎
+  </label>
+  <input name="body" placeholder="{% if item.status == 'negotiating' %}Discuss the value…{% elif item.status in ('confirmed','scheduled') %}Arrange the meetup…{% elif item.status in ('disputed','mediation') %}Try to resolve it together…{% else %}Write a message…{% endif %}" autocomplete="off">
   <button class="btn-primary">Send</button>
 </form>
+<p class="chat-footnote">
+  <span id="attach-name"></span>
+  {% if item.status in ('open','negotiating','agreement_pending') %}
+  Messages may be reviewed by a moderator if a dispute is raised. System notices can't be deleted.
+  {% endif %}
+  <a class="tiny-link" href="/report?request_id={{ item.id }}">Report</a>
+  {% set other_id = item.requester_id if item.requester_id != user.id else item.provider_id %}
+  {% if other_id %}<form method="post" action="/users/{{ other_id }}/block" class="inline-form"><input type="hidden" name="next" value="/chat/{{ item.id }}"><button class="tiny-link danger">Block resident</button></form>{% endif %}
+</p>
 </div>
 
 
@@ -267,6 +283,13 @@ document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener(
 function syncOptions() {
   document.querySelectorAll('.offer-option').forEach(o => {
     o.classList.toggle('selected', o.querySelector('input[name="mode"]').checked);
+  });
+}
+const attachInput = document.getElementById('attach-input');
+const attachName = document.getElementById('attach-name');
+if (attachInput) {
+  attachInput.addEventListener('change', () => {
+    attachName.textContent = attachInput.files.length ? '📎 ' + attachInput.files[0].name : '';
   });
 }
 </script>

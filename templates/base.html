@@ -4,22 +4,42 @@
 <nav class="sidebar">
   <div class="brand-row">
     <a class="brand" href="/"><img class="brand-logo" src="/static/iou-logo2.png" alt="IoU"></a>
+    {% if user %}
     <a class="bell {% if page == 'notifications' %}active{% endif %}" href="/notifications" title="Notifications">🔔{% if unread_notifs or unread_msgs %}<span class="bell-badge">{{ (unread_notifs or 0) + (unread_msgs or 0) }}</span>{% endif %}</a>
+    {% endif %}
   </div>
   <p class="brand-tag">Help Comes Full Circle.</p>
-  <a class="side-user" href="/account" title="Your account">
+  {% if user %}
+  <a class="side-user" href="/profile" title="Your profile">
     <div class="avatar">{{ user.name[0] }}</div>
-    <div class="sidebar-user-meta"><b>{{ user.name }}</b><small>{{ user.email }}</small></div>
+    {% set sc = user.reliability if user.reliability is not none else 60 %}
+    {% set lab = 'Suspended' if sc <= 0 else ('Restricted' if sc < 30 else ('Limited' if sc < 60 else ('Strong' if sc < 80 else 'Excellent'))) %}
+    <div class="sidebar-user-meta"><b>{{ user.name }}</b>
+      <small>{{ sc }}/100 · {{ lab }}</small>
+    </div>
     <span class="side-user-arrow">→</span>
   </a>
   <div class="nav-links">
     <a class="nav-link {% if page == 'home' %}active{% endif %}" href="/"><span class="nav-ico">⌂</span>Home</a>
-    <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Community</a>
+    <a class="nav-link {% if page == 'browse' %}active{% endif %}" href="/browse"><span class="nav-ico">☷</span>Tasks</a>
+    <a class="nav-link {% if page == 'circle' %}active{% endif %}" href="/chain-invitations"><span class="nav-ico">↻</span>Circle{% if circle_pending %}<span class="unread-dot"></span>{% endif %}</a>
+    <a class="nav-link {% if page == 'credits' %}active{% endif %}" href="/history"><span class="nav-ico">◈</span>Credits</a>
     <a class="nav-link {% if page == 'messages' %}active{% endif %}" href="/messages"><span class="nav-ico">✉</span>Messages{% if unread_msgs %}<span class="unread-dot"></span>{% endif %}</a>
     <a class="nav-link {% if page == 'help' %}active{% endif %}" href="/help"><span class="nav-ico">?</span>Help</a>
     <a class="nav-link {% if page == 'account' %}active{% endif %}" href="/account"><span class="nav-ico">⚙</span>Settings</a>
+    {% if user and user.is_moderator %}
+    <a class="nav-link {% if page == 'moderator' %}active{% endif %}" href="/moderator/reports"><span class="nav-ico">⚖</span>Moderator</a>
+    {% endif %}
   </div>
+  <p class="nav-footer"><a href="/legal">Terms &amp; privacy</a></p>
   <form method="post" action="/logout" class="side-logout"><button class="link-button" title="Sign out">⏻ Sign out</button></form>
+  {% else %}
+  <div class="nav-links">
+    <a class="nav-link" href="/login"><span class="nav-ico">→</span>Sign in</a>
+    <a class="nav-link" href="/register"><span class="nav-ico">＋</span>Create account</a>
+  </div>
+  <p class="nav-footer"><a href="/legal">Terms &amp; privacy</a></p>
+  {% endif %}
 </nav>
 <main class="content {% block content_class %}{% endblock %}">{% block content %}{% endblock %}</main>
 <div class="toast" id="toast" hidden></div>

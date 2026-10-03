@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}IoU · {{ title }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    <p class="muted">Prototype policy version {{ policy_version }}</p>
+  </div>
+</header>
+
+{% if index %}
+<section class="card">
+  <ul class="simple-list">
+    {% for slug, name in index %}<li><a href="/legal/{{ slug }}">{{ name }}</a></li>{% endfor %}
+  </ul>
+  <p class="muted" style="margin-top:1rem">IoU facilitates exchanges between neighbours. IoU is not a party to any agreement between residents, and these policies should be read alongside the <a href="/legal/guidelines">Community Guidelines</a>.</p>
+</section>
+{% else %}
+<section class="card legal-doc">
+  {% for heading, body in sections %}
+  <div class="legal-section">
+    <h2>{{ heading }}</h2>
+    <p>{{ body }}</p>
+  </div>
+  {% endfor %}
+</section>
+<nav class="legal-nav">
+  {% for doc_slug, name in [
+      ('tos', 'Terms of Service'), ('privacy', 'Privacy Notice'),
+      ('guidelines', 'Community Guidelines'), ('disputes', 'Dispute Policy'),
+      ('circle', 'Circle Agreement'), ('ai', 'AI Transparency Notice')] %}
+  {% if doc_slug != slug %}<a class="btn-ghost btn-sm" href="/legal/{{ doc_slug }}">{{ name }}</a>{% endif %}
+  {% endfor %}
+</nav>
+{% endif %}
+{% endblock %}

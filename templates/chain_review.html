@@ -1,41 +1,98 @@
 {% extends "base.html" %}
-{% block title %}IoU · Task-chain invitation{% endblock %}
+{% block title %}IoU · Circle{% endblock %}
 {% block content %}
 <header class="page-head">
-  <div><a class="btn-ghost btn-back" href="/chain-invitations">← Invitations</a><h1 style="margin-top:.8rem">Task-chain invitation #{{ proposal.id }}</h1><p class="muted">{{ proposal.balance_explanation }}</p></div>
+  <div><a class="btn-ghost btn-back" href="/chain-invitations">← Circles</a>
+    <h1 style="margin-top:.8rem">Circle #{{ proposal.id }}</h1>
+    <p class="muted">{{ proposal.balance_explanation }}</p></div>
 </header>
-<section class="card">
-  <h2>How this works</h2>
-  <p>Everyone chooses whether to join. If at least three people accept, each accepted participant completes one other participant's task and has their own task completed by someone else. No credits move just because you join.</p>
-  <p class="muted">Each task still uses its normal chat, agreement, safely held payment, completion proof and problem-reporting process.</p>
+
+{% if proposal.status == 'completed' %}
+<section class="card circle-complete">
+  <h2>Circle complete 🎉</h2>
+  <div class="circle-stats">
+    <div><span class="stat-big">{{ progress.total }}</span><small>needs fulfilled</small></div>
+    <div><span class="stat-big">{{ progress.total }}</span><small>neighbours helped</small></div>
+    <div><span class="stat-big">0</span><small>credits exchanged</small></div>
+  </div>
+  <p class="muted">This is the point of the Circle: sometimes the fairest exchange needs no credits at all.</p>
 </section>
+{% elif proposal.status == 'dissolved' %}
 <section class="card">
-  <h2>Tasks in this invitation</h2>
+  <h2>This Circle was dissolved</h2>
+  <p class="muted">Someone withdrew. Tasks that were not finished went back to the board so neighbours can repost them, and completed work stays honoured.</p>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>How this Circle works</h2>
+  <p>Everyone chooses which task they would be comfortable helping with — except their own. When all members agree the Circle activates and <b>no credits move</b>. You help one neighbour, another helps you.</p>
+  <p class="muted">Each task keeps IoU's normal safeguards: chat, agreement, completion and problem reporting. Only the payment disappears.</p>
+</section>
+
+<section class="card">
+  <h2>Tasks in this Circle</h2>
   <ul class="simple-list">
-  {% for member in members %}
-    <li><b>{{ member.requester_name }}</b>: {{ member.title }} · {{ member.requester_value }} credits <span class="status">{{ member.response }}</span></li>
+  {% for member in all_members %}
+    <li><b>{{ member.requester_name }}</b>: {{ member.title }} · ~{{ member.requester_value }} credits
+      <span class="status s-open">{{ member.response }}</span>
+      {% if member.request_id == my_own_request %}<small class="muted">your own task</small>{% endif %}</li>
   {% endfor %}
   </ul>
 </section>
-{% if proposal.status == 'active' %}
+
+{% if proposal.status == 'pending' %}
 <section class="card">
-  <h2>Active circulation</h2>
-  <ul class="simple-list">{% for task in tasks %}<li><b>{{ task.helper_name }}</b> completes <a href="/requests/{{ task.request_id }}">{{ task.title }}</a> for {{ task.requester_name }} · {{ task.value }} credits</li>{% endfor %}</ul>
+  <h2>Choose what you can help with</h2>
+  <p class="muted">Pick any neighbour's task you would be comfortable doing. You will never be asked to do your own, and you can always say no.</p>
+  <form method="post" action="/chains/{{ proposal.id }}/interest">
+    {% for member in all_members %}
+    {% if member.request_id != my_own_request %}
+    <label class="check-row">
+      <input type="checkbox" name="tasks" value="{{ member.request_id }}" {% if member.request_id in my_interests %}checked{% endif %}>
+      I can help with <b>“{{ member.title }}”</b> for {{ member.requester_name }} <small class="muted">· ~{{ member.requester_value }} credits</small>
+    </label>
+    {% endif %}
+    {% endfor %}
+    <button class="btn-primary" style="margin-top:.6rem">Save my choices</button>
+  </form>
 </section>
-{% elif proposal.status == 'pending' and my_response == 'pending' %}
+
+{% if my_response == 'pending' %}
 <section class="card">
   <h2>Would you like to join?</h2>
-  <p class="muted">You will be committing to complete one of the other listed tasks if the chain activates.</p>
-  <div class="modal-actions"><form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="declined"><button class="btn-ghost danger">Decline</button></form><form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="accepted"><button class="btn-primary">Join chain</button></form></div>
+  <p class="muted">You commit to complete one of the tasks you picked above. Nothing activates until every member joins.</p>
+  <div class="modal-actions">
+    <form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="declined"><button class="btn-ghost danger">Not interested</button></form>
+    <form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="accepted"><button class="btn-primary">Join Circle &amp; Agree</button></form>
+  </div>
 </section>
-{% elif proposal.status == 'pending' %}
-<p class="success card">You chose to {{ my_response }}. The invitation remains open until enough people join or it expires.</p>
 {% else %}
-<p class="card muted">This invitation is {{ proposal.status }}.</p>
+<p class="success card">You chose to {{ my_response }}. Waiting for everyone else.</p>
 {% endif %}
+{% endif %}
+
+{% if proposal.status == 'active' %}
+<section class="card">
+  <h2>Active loop · {{ progress.done }} / {{ progress.total }} tasks complete</h2>
+  <ul class="simple-list">
+  {% for task in tasks %}
+    <li><b>{{ task.helper_name }}</b> helps <b>{{ task.requester_name }}</b> with <a href="/requests/{{ task.request_id }}">{{ task.title }}</a>
+      <span class="status s-{{ task.request_status }}">{{ task.request_status.replace('_',' ') }}</span>
+      <small class="muted">· 0 credits</small></li>
+  {% endfor %}
+  </ul>
+  <form method="post" action="/chains/{{ proposal.id }}/leave">
+    <button class="btn-ghost danger" onclick="return confirm('Withdraw from this Circle? Your neighbours already rely on you.')">Withdraw from Circle</button>
+  </form>
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Group discussion</h2>
   {% for message in messages %}<p><b>{{ message.sender_name or 'IoU' }}</b> <span class="muted">{{ message.created_at[:16].replace('T',' ') }}</span><br>{{ message.body }}</p>{% else %}<p class="empty">No messages yet.</p>{% endfor %}
-  {% if proposal.status == 'pending' %}<form method="post" action="/chains/{{ proposal.id }}/messages"><label>Message the invited group<textarea name="body" rows="3" required></textarea></label><button class="btn-primary">Send message</button></form>{% endif %}
+  {% if proposal.status in ('pending','active') %}<form method="post" action="/chains/{{ proposal.id }}/messages"><label>Message the Circle<textarea name="body" rows="3" required></textarea></label><button class="btn-primary">Send message</button></form>{% endif %}
 </section>
+
+<p class="muted"><a href="/legal/circle">Read the Circle Agreement →</a></p>
 {% endblock %}

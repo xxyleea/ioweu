@@ -8,6 +8,33 @@
   </div>
 </header>
 
+{% if circle_invite %}
+<section class="card circle-banner">
+  <span class="circle-spin">↻</span>
+  <div>
+    <b>A Circle may be forming near you</b>
+    <p class="muted">{{ circle_invite.member_count }} nearby tasks have similar values and compatible timing. Help someone. Receive help. No credits exchanged.</p>
+  </div>
+  <a class="btn-primary" href="/chains/{{ circle_invite.id }}">Explore Circle</a>
+</section>
+{% endif %}
+
+{% if standing.tier != 'normal' %}
+<section class="card alert-card">
+  {% if standing.tier == 'suspended' %}
+  <b>Your account is suspended.</b>
+  <p class="muted">You can browse, review your history, follow open disputes, export your data, or submit an appeal.</p>
+  {% else %}
+  <b>Your reliability is currently {{ standing.score }}.</b>
+  <p class="muted">Restricted accounts can post or accept tasks up to {{ standing.restricted_cap }} credits. Complete successful tasks to restore full privileges.</p>
+  {% endif %}
+  <form method="post" action="/appeal" onsubmit="return confirm('Submit an appeal for a moderator to review?')">
+    <input type="hidden" name="description" value="Account standing review requested by the resident.">
+    <button class="btn-ghost">Appeal {{ 'suspension' if standing.tier == 'suspended' else 'restriction' }}</button>
+  </form>
+</section>
+{% endif %}
+
 {% if recommended_tasks %}
 <section class="home-section">
   <h2 class="section-title">Recommended for you</h2>
@@ -107,12 +134,20 @@
   <span class="stat-label">Your credits</span>
   <span class="stat-big {% if user.balance < 0 %}neg{% endif %}">{{ user.balance }}</span>
   {% if user.balance < 0 %}
-  <p class="credit-warn">Below zero — help a neighbour to get back above 0 before starting new requests.</p>
+  <p class="credit-warn">Your balance needs rebalancing. Complete a task or join an available Circle to get back above zero.</p>
   {% else %}
   <p class="muted">credits you can offer</p>
   {% endif %}
-  <small class="muted">{{ stats.completed }} exchanges done · +{{ stats.kudos }} kudos earned</small>
+  <small class="muted">{{ stats.completed }} exchanges done · +{{ stats.kudos }} kudos earned · {{ circles_done }} circles completed</small>
   <a class="btn-ghost btn-sm" href="/history">View history →</a>
+</section>
+
+<section class="card credit-panel" style="margin-top:1rem">
+  <span class="stat-label">Reliability</span>
+  <span class="stat-big">{{ standing.score }}<small>/100</small></span>
+  <span class="rel-label rel-{{ standing.tier }}">{{ standing.label }}</span>
+  <p class="muted">Separate from your credits — it measures how dependable you are on IoU.</p>
+  <a class="btn-ghost btn-sm" href="/profile">Public profile →</a>
 </section>
 </div>
 </div>

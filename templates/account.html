@@ -1,51 +1,45 @@
 {% extends "base.html" %}
-{% block title %}IoU · Account{% endblock %}
+{% block title %}IoU · Settings{% endblock %}
 {% block content %}
 {% if saved %}<div class="success-banner"><span class="success-tick">✓</span><div><b>Profile saved.</b></div></div>{% endif %}
 <header class="page-head">
   <div>
-    <h1>My account</h1>
-    <p class="muted">Your profile, credits and skills — edit anytime.</p>
+    <h1>Settings</h1>
+    <p class="muted">Profile, privacy, Circle preferences and your data rights.</p>
   </div>
+  <a class="btn-ghost" href="/profile">View public profile →</a>
 </header>
 
 <div class="account-grid">
   <div class="card profile-card">
     <div class="avatar avatar-big">{{ user.name[0] }}</div>
     <h2>{{ user.name }}</h2>
-    <p class="muted">{{ user.email }}</p>
-    {% if user.community_helper %}<span class="match-badge">★ Community helper</span>{% endif %}
+    <p class="muted">{% if user.username %}@{{ user.username }} · {% endif %}{{ user.email }}</p>
+    <div class="badge-row">
+      <span class="match-badge {% if user.verification_neighbourhood == 'verified' %}verified{% endif %}">{% if user.verification_neighbourhood == 'verified' %}✓{% else %}○{% endif %} Neighbourhood {{ user.verification_neighbourhood }}</span>
+      <span class="match-badge simulated">○ Identity verification — planned</span>
+    </div>
     <div class="profile-stats">
       <div><span class="stat-big">{{ user.balance }}</span><small>available</small></div>
       <div><span class="stat-big">{{ user.held_balance }}</span><small>held for active tasks</small></div>
+      <div><span class="stat-big">{{ user.reliability if user.reliability is not none else 60 }}</span><small>reliability</small></div>
     </div>
     <ul class="profile-meta">
-      <li><small>Age</small><b>{{ user.age or '—' }}</b></li>
       <li><small>District</small><b>{{ user.district or '—' }}</b></li>
-      <li><small>Address</small><b>{{ user.address or '—' }}</b></li>
-      <li><small>HKID</small><b>{{ (user.hkid[:1] ~ '•••••' ~ user.hkid[-3:]) if user.hkid else '—' }}</b></li>
-      <li><small>Birthday</small><b>{{ user.birthday or '—' }}</b></li>
+      <li><small>Neighbourhood</small><b>{{ user.address or '—' }}</b></li>
       <li><small>Language</small><b>{{ {'en':'English','yue':'粵語','zh':'普通话'}[user.language] or user.language }}</b></li>
       <li><small>Member since</small><b>{{ user.created_at[:10] if user.created_at else 'Early member' }}</b></li>
     </ul>
+    <p class="muted small">Identity verification is simulated in this prototype. In production it would stop people creating unlimited accounts to farm welcome credits — that future check is what protects the credit economy.</p>
   </div>
 
   <div>
     <div class="card">
-      <h2>My skillset</h2>
-      {% set skills = user.skills.split(',') if user.skills else [] %}
-      {% if skills and skills[0] %}
-      <div class="genre-row">
-        {% for skill in skills %}<span class="skill-tag">{{ skill }}</span>{% endfor %}
-      </div>
-      {% else %}<p class="empty">No skills added yet — matching tasks won't be recommended until you do.</p>{% endif %}
-      <a class="btn-ghost" href="/onboarding/skills?next=/account">Edit skills →</a>
-    </div>
-
-    <div class="card" style="margin-top:1.2rem">
       <h2>Edit profile</h2>
       <form method="post" action="/account">
         <label>Name<input name="name" value="{{ user.name }}" required></label>
+        <label>Username<input name="username" value="{{ user.username or '' }}" placeholder="Shown on your public profile"></label>
+        <label>Bio<textarea name="bio" rows="3" placeholder="A line about you and what you enjoy helping with">{{ user.bio or '' }}</textarea></label>
         <div class="value-form">
           <label>District
             <select name="district">
@@ -53,11 +47,12 @@
               {% for d in hk_districts %}<option value="{{ d }}" {% if user.district == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
             </select>
           </label>
-          <label>Age<input name="age" type="number" min="16" max="120" value="{{ user.age or '' }}"></label>
+          <label>Neighbourhood<input name="address" value="{{ user.address or '' }}"></label>
         </div>
-        <label>Address<input name="address" value="{{ user.address or '' }}"></label>
-        <label>HKID<input name="hkid" value="{{ user.hkid or '' }}" placeholder="A123456(7)"></label>
-        <label>Birthday<input name="birthday" type="date" value="{{ user.birthday or '' }}"></label>
+        <div class="value-form">
+          <label>Age<input name="age" type="number" min="16" max="120" value="{{ user.age or '' }}"></label>
+          <label>Birthday<input name="birthday" type="date" value="{{ user.birthday or '' }}"></label>
+        </div>
         <label>Language
           <select name="language">
             <option value="en" {% if user.language == 'en' %}selected{% endif %}>English</option>
@@ -65,12 +60,74 @@
             <option value="zh" {% if user.language == 'zh' %}selected{% endif %}>普通话</option>
           </select>
         </label>
-        <div class="consent-settings">
-          <p class="field-label">Privacy &amp; consent</p>
-          <label class="check-row"><input type="checkbox" name="consent_analytics" value="1" {% if user.consent_analytics %}checked{% endif %}> Allow anonymized usage data to improve IoU recommendations and matching</label>
-        </div>
         <button class="btn-primary">Save changes</button>
       </form>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>Circle</h2>
+      <form method="post" action="/account">
+        <input type="hidden" name="name" value="{{ user.name }}">
+        <label class="check-row"><input type="checkbox" name="circle_enabled" value="1" {% if user.circle_enabled %}checked{% endif %}> Circle suggestions — tell me when nearby tasks could form a help loop</label>
+        <button class="btn-ghost">Save Circle preference</button>
+      </form>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>Privacy &amp; data</h2>
+      <form method="post" action="/account">
+        <input type="hidden" name="name" value="{{ user.name }}">
+        <p class="field-label">Profile visibility</p>
+        <label class="check-row"><input type="checkbox" name="vis_photo" value="1" {% if user.vis_photo %}checked{% endif %}> Show my profile photo</label>
+        <label class="check-row"><input type="checkbox" name="vis_neighbourhood" value="1" {% if user.vis_neighbourhood %}checked{% endif %}> Show my neighbourhood</label>
+        <label class="check-row"><input type="checkbox" name="vis_skills" value="1" {% if user.vis_skills %}checked{% endif %}> Show my skills</label>
+        <label class="check-row"><input type="checkbox" name="vis_bio" value="1" {% if user.vis_bio %}checked{% endif %}> Show my bio</label>
+        <label class="check-row"><input type="checkbox" name="vis_completed" value="1" {% if user.vis_completed %}checked{% endif %}> Show my completed-task count</label>
+        <label class="check-row"><input type="checkbox" name="vis_circle" value="1" {% if user.vis_circle %}checked{% endif %}> Show my Circle count</label>
+        <p class="muted small">Reliability cannot be hidden from people you are about to transact with — it is a trust mechanism. Your exact address is never public.</p>
+        <p class="field-label">Optional analytics</p>
+        <label class="check-row"><input type="checkbox" name="analytics_consent" value="1" {% if user.analytics_consent %}checked{% endif %}> Allow anonymized usage data to improve IoU recommendations</label>
+        <p class="muted small">Off by default. Separate from the processing needed to run credit reference bands, evidence flags and mediation.</p>
+        <button class="btn-primary">Save privacy choices</button>
+      </form>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>Blocked residents</h2>
+      {% if blocked %}<ul class="simple-list">
+        {% for b in blocked %}<li>{{ b.name }}
+          <form method="post" action="/users/{{ b.blocked_id }}/unblock"><button class="btn-ghost btn-sm">Unblock</button></form></li>{% endfor %}
+      </ul>
+      {% else %}<p class="empty">You haven't blocked anyone.</p>{% endif %}
+      <p class="muted small">Blocked residents cannot message you or accept each other's tasks, and IoU avoids matching you into the same Circle.</p>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>My data</h2>
+      <p class="muted">Download everything IoU holds about you, including tasks, ledger entries, Circle participation and reliability events.</p>
+      <a class="btn-ghost" href="/download-my-data">⬇ Download My Data</a>
+      <p class="muted" style="margin-top:1rem;color:var(--danger)">Deleting your account removes your public profile. Some records may remain in de-identified form to preserve ledger integrity or resolve open disputes.</p>
+      <details>
+        <summary>Delete my account</summary>
+        <form method="post" action="/delete-account" class="modal-form" onsubmit="return confirm('This cannot be undone. Continue?')">
+          <label>Password<input type="password" name="password" required placeholder="Re-enter your password"></label>
+          <label>Type DELETE to confirm<input type="text" name="confirm" required placeholder="DELETE"></label>
+          <button class="btn-primary danger-solid">Delete my account</button>
+        </form>
+      </details>
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>Legal</h2>
+      <div class="legal-links">
+        <a href="/legal/tos">Terms of Service</a>
+        <a href="/legal/privacy">Privacy Notice</a>
+        <a href="/legal/guidelines">Community Guidelines</a>
+        <a href="/legal/disputes">Dispute Policy</a>
+        <a href="/legal/circle">Circle Agreement</a>
+        <a href="/legal/ai">AI Transparency Notice</a>
+      </div>
+      <p class="muted small">Accepted: {% for c in consents %}{{ c.policy }}{% if not loop.last %}, {% endif %}{% else %}none recorded{% endfor %}</p>
     </div>
   </div>
 </div>

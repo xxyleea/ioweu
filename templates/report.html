@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}IoU · Make a report{% endblock %}
+{% block content %}
+<header class="page-head"><div>
+  <a class="btn-ghost btn-back" href="/browse">← Back</a>
+  <h1 style="margin-top:.8rem">Report something to the moderators</h1>
+  <p class="muted">Reports go to the IoU moderation team. Nothing here is a professional emergency service.</p>
+</div></header>
+
+<div class="card alert-card">
+  <b>If there is immediate danger, contact local emergency services first.</b>
+  <p class="muted">IoU's reporting function is not an emergency response service.</p>
+</div>
+
+<form class="card form-card" method="post" action="/report">
+  {% if reported_user_id %}<input type="hidden" name="reported_user_id" value="{{ reported_user_id }}">{% endif %}
+  {% if reported_request_id %}<input type="hidden" name="reported_request_id" value="{{ reported_request_id }}">{% endif %}
+  <label>Category
+    <select name="category" required>
+      {% for category in categories %}<option value="{{ category }}">{{ category|capitalize }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>What happened?
+    <textarea name="description" rows="5" required placeholder="Tell the moderators what you observed. Include dates and task names where possible."></textarea>
+  </label>
+  <p class="muted">Blocking the resident is separate — you can also block them from your Settings → Privacy page so they cannot message you again.</p>
+  <div class="modal-actions">
+    <a class="btn-ghost" href="/browse">Cancel</a>
+    <button class="btn-primary danger-solid">Send report</button>
+  </div>
+</form>
+{% endblock %}

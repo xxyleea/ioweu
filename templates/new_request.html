@@ -24,6 +24,22 @@
     <h2>Task details</h2>
     <label>Task title<input id="new-title" name="title" placeholder="e.g. Help me assemble a bookshelf"></label>
     <label>Details<textarea id="new-description" name="description" placeholder="What needs doing, any tools needed, anything the helper should know"></textarea></label>
+    <label>Expected duration
+      <select id="duration" name="duration_minutes">
+        <option value="0">Not sure yet</option>
+        <option value="30">About 30 minutes</option>
+        <option value="60">About 1 hour</option>
+        <option value="120">About 2 hours</option>
+        <option value="240">Half a day</option>
+      </select>
+    </label>
+    <label>Urgency
+      <select id="urgency-value" name="urgency">
+        <option value="low">Low</option>
+        <option value="normal" selected>Normal</option>
+        <option value="urgent">Urgent</option>
+      </select>
+    </label>
     <label>How will it happen?</label>
     <div class="time-mode">
       <label class="radio-row"><input type="radio" name="task_mode" value="offline" id="tm-offline" checked> <b>In person</b> — someone comes over or meets you somewhere</label>
@@ -50,9 +66,7 @@
     </div>
     <div class="value-form" id="deadline-row">
       <label>Needed by<input id="needed-by" name="needed_by" type="date"></label>
-      <div class="urgency-preview"><span class="field-label">Urgency (auto)</span><br><span class="urgency" id="urgency-badge" hidden></span><small class="muted" id="urgency-hint">Pick a date above</small></div>
     </div>
-    <input type="hidden" name="urgency" id="urgency-value" value="">
   </div>
 
   <div class="wizard-step" data-step="2">
@@ -80,11 +94,13 @@
         </div>
       </div>
       <p class="ai-suggestion"><b>Neighbourhood reference</b><span class="offer-num" id="pv-rec"></span> credits <span id="pv-recrec"></span></p>
+      <p class="muted small" id="pv-window">Dispute window: 3 days after completion · exact address stays private</p>
     </article>
     <div class="range-warning" id="range-warning" hidden>
       <b>Your offer is outside the recommended range.</b>
       <label class="warning-confirm"><input type="checkbox" id="range-check"> I understand and want to post it anyway.</label>
     </div>
+    <label class="check-row"><input type="checkbox" name="confirm_accurate" value="1" id="accurate-check"> I confirm that the description accurately represents the requested task.</label>
   </div>
 
   <div class="wizard-dots"><span class="dot active"></span><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
@@ -134,9 +150,6 @@ tmOffline.addEventListener("change", syncTaskMode);
 tmOnline.addEventListener("change", syncTaskMode);
 const specificTimeRow = document.querySelector("#specific-time-row");
 const deadlineRow = document.querySelector("#deadline-row");
-const urgencyValue = document.querySelector("#urgency-value");
-const urgencyBadge = document.querySelector("#urgency-badge");
-const urgencyHint = document.querySelector("#urgency-hint");
 const myAddress = {{ (user.district or user.address_id or '')|tojson }};
 let current = 0;
 let recData = null;
@@ -149,27 +162,6 @@ function chosenCategory() {
 function chosenLocation() {
   return locationInput.value.trim();
 }
-function computeUrgency() {
-  if (!neededBy.value) {
-    urgencyValue.value = "";
-    urgencyBadge.hidden = true;
-    urgencyHint.hidden = false;
-    return;
-  }
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const target = new Date(neededBy.value + "T00:00:00");
-  const days = Math.round((target - today) / 86400000);
-  let value, label, cls;
-  if (days <= 3) { value = "urgent"; label = "⚡ Urgent · within 3 days"; cls = "urgency urgency-urgent"; }
-  else if (days <= 7) { value = "soon"; label = "Soon · within a week"; cls = "urgency urgency-soon"; }
-  else { value = "low"; label = "Low · within a month"; cls = "urgency urgency-low"; }
-  urgencyValue.value = value;
-  urgencyBadge.textContent = label;
-  urgencyBadge.className = cls;
-  urgencyBadge.hidden = false;
-  urgencyHint.hidden = true;
-}
 function syncTimeMode() {
   const specific = tmSpecific.checked;
   specificTimeRow.hidden = !specific;
@@ -177,7 +169,6 @@ function syncTimeMode() {
   if (!specific) preferredTime.value = "";
   if (specific && preferredTime.value) {
     neededBy.value = preferredTime.value.slice(0, 10);
-    computeUrgency();
   }
 }
 tmSpecific.addEventListener("change", syncTimeMode);
@@ -185,7 +176,6 @@ tmFlexible.addEventListener("change", syncTimeMode);
 preferredTime.addEventListener("input", () => {
   if (tmSpecific.checked && preferredTime.value) {
     neededBy.value = preferredTime.value.slice(0, 10);
-    computeUrgency();
   }
 });
 if (addrSuggest) {
@@ -198,7 +188,6 @@ if (addrSuggest) {
   });
 }
 neededBy.min = new Date().toISOString().split("T")[0];
-neededBy.addEventListener("change", computeUrgency);
 async function updateRecommendation() {
   const category = chosenCategory();
   if (!category) return;
@@ -221,7 +210,6 @@ function buildPreview() {
   if (tmOnline.checked) meta.push("🌐 Online");
   else if (chosenLocation()) meta.push("📍 " + chosenLocation());
   if (neededBy.value) meta.push("⏰ needed by " + neededBy.value);
-  if (urgencyValue.value) meta.push(urgencyValue.value);
   document.querySelector("#pv-meta").textContent = meta.join(" · ");
   document.querySelector("#pv-offer").textContent = offer.value;
   document.querySelector("#pv-buffer").textContent = buffer.value;

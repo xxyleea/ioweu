@@ -79,7 +79,15 @@
         {% endif %}
         <div class="chat-bubble">
           {% if m.sender_id != ns.sender %}<small class="chat-who">{{ m.sender_name or 'Neighbour' }}</small>{% endif %}
-          <p class="chat-text">{{ m.body }}</p>
+          {% if m.attachment %}
+            {% set ext = m.attachment.lower().rsplit('.', 1)[-1] %}
+            {% if ext in ('png','jpg','jpeg') %}
+            <a class="chat-image" href="/uploads/{{ m.attachment }}" target="_blank"><img src="/uploads/{{ m.attachment }}" alt="Shared image"></a>
+            {% else %}
+            <a class="chat-file" href="/uploads/{{ m.attachment }}" target="_blank">📄 Download attachment</a>
+            {% endif %}
+          {% endif %}
+          {% if m.body %}<p class="chat-text">{{ m.body }}</p>{% endif %}
           <span class="chat-time">{{ m.created_at|hktime }}</span>
         </div>
       </div>

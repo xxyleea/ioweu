@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}IoU · {{ profile.name }}{% endblock %}
+{% block content %}
+{% set score = profile.reliability if profile.reliability is not none else 60 %}
+{% set label = 'Suspended' if score <= 0 else ('Restricted' if score < 30 else ('Limited' if score < 60 else ('Strong' if score < 80 else 'Excellent'))) %}
+<header class="page-head">
+  <div>
+    {% if not owns_profile %}<a class="btn-ghost btn-back" href="/browse">← Back</a>{% endif %}
+    <h1 style="margin-top:.8rem">{{ profile.name }}</h1>
+    <p class="muted">{% if profile.username %}@{{ profile.username }} · {% endif %}Member since {{ profile.created_at[:10] if profile.created_at else '2026' }}</p>
+  </div>
+  <div class="head-actions">
+    {% if owns_profile %}
+    <a class="btn-ghost" href="/account">Edit profile →</a>
+    {% else %}
+    <a class="btn-ghost" href="/report?user_id={{ profile.id }}">Report resident</a>
+    <form method="post" action="/users/{{ profile.id }}/block"><input type="hidden" name="next" value="/profile/{{ profile.id }}"><button class="btn-ghost danger">Block resident</button></form>
+    {% endif %}
+  </div>
+</header>
+
+<div class="profile-grid">
+  <div class="card profile-card">
+    <div class="avatar avatar-big">{{ profile.name[0] }}</div>
+    <h2>{{ profile.name.split(' ')[0] }}{{ ' ' ~ profile.name.split(' ')[-1][0] ~ '.' if profile.name.split(' ')|length > 1 else '' }}</h2>
+    {% if profile.verification_neighbourhood == 'verified' %}<span class="match-badge">✓ Neighbourhood verified</span>{% endif %}
+    {% if profile.verification_identity == 'simulated' %}<span class="match-badge simulated">○ Identity verification — planned</span>{% endif %}
+    {% if profile.vis_neighbourhood %}<p class="muted">📍 {{ profile.district or profile.address_id or 'Neighbourhood' }}</p>{% endif %}
+    {% if profile.vis_bio and profile.bio %}<p>{{ profile.bio }}</p>{% endif %}
+    {% if profile.vis_skills %}
+    <div class="genre-row">
+      {% for skill in profile.skills.split(',') if profile.skills and skill %}<span class="skill-tag">{{ skill }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div>
+    <div class="card reliability-panel">
+      <span class="stat-label">Reliability</span>
+      <span class="stat-big">{{ score }}<small>/100</small></span>
+      <span class="rel-label rel-{{ 'excellent' if score >= 80 else ('strong' if score >= 60 else ('limited' if score >= 30 else ('restricted' if score >= 1 else 'suspended'))) }}">{{ label }}</span>
+      <p class="muted" style="margin-top:.5rem">IoU reliability measures how dependable this resident is on the platform. It is separate from their credit balance and is not a financial credit score.</p>
+      {% if score < 30 %}
+      <p class="credit-warn">
+        {% if score <= 0 %}This account is suspended.{% else %}
+        This resident is restricted: the largest task they can post or accept is 5 credits.{% endif %}
+      </p>
+      {% endif %}
+    </div>
+
+    <div class="card" style="margin-top:1.2rem">
+      <h2>Community record</h2>
+      <div class="profile-stats">
+        <div><span class="stat-big">👍 {{ thumbs.c if thumbs else 0 }}</span><small>thumbs-up</small></div>
+        <div><span class="stat-big">{{ completed }}</span><small>tasks completed</small></div>
+        <div><span class="stat-big">{{ circles }}</span><small>circles completed</small></div>
+      </div>
+      {% if events %}
+      <h3 style="margin-top:1rem">Recent reliability events</h3>
+      <ul class="simple-list">
+        {% for event in events %}
+        <li>{{ event.created_at[:10] }} · <b>{{ '+' if event.score_change > 0 else '' }}{{ event.score_change }}</b> {{ event.reason }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if not owns_profile %}
+<section class="card">
+  <h2>Safety</h2>
+  <p class="muted">IoU does not automatically verify professional qualifications. Discuss experience and any credentials directly in chat before agreeing to a task with this resident.</p>
+</section>
+{% endif %}
+{% endblock %}
