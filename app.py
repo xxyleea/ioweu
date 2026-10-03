@@ -260,10 +260,17 @@ def circle_member_rows(connection: sqlite3.Connection, circle_id: int,
             if r["response"] != "declined" and (r["status"] or MEMBER_PENDING) not in MEMBER_GONE]
 
 
-def member_row(connection: sqlite3.Connection, circle_id: int, user_id: int):
-    return connection.execute(
+def member_row(connection: sqlite3.Connection, circle_id: int, user_id: int,
+               include_removed: bool = False):
+    """A removed member is not a member — otherwise leaving cannot take effect."""
+    row = connection.execute(
         "SELECT * FROM chain_members WHERE proposal_id=? AND user_id=?",
         (circle_id, user_id)).fetchone()
+    if row is None or include_removed:
+        return row
+    if row["response"] == "declined" or (row["status"] or MEMBER_PENDING) in MEMBER_GONE:
+        return None
+    return row
 
 
 def circle_task_rows(connection: sqlite3.Connection, circle_id: int) -> list[sqlite3.Row]:
@@ -2777,7 +2784,10 @@ def chain_invitations(request: Request):
                       SUM(allm.response='accepted') accepted_count
                FROM chain_proposals cp JOIN chain_members cm ON cm.proposal_id=cp.id
                JOIN chain_members allm ON allm.proposal_id=cp.id
-               WHERE cm.user_id=? GROUP BY cp.id ORDER BY cp.created_at DESC""",
+               WHERE cm.user_id=?
+                 AND cm.response != 'declined' AND COALESCE(cm.status,'pending') != 'removed'
+                 AND allm.response != 'declined' AND COALESCE(allm.status,'pending') != 'removed'
+               GROUP BY cp.id ORDER BY cp.created_at DESC""",
             (user["id"],)).fetchall()
     return render(request, "chain_invitations.html", page="circle", proposals=proposals)
 
@@ -2820,7 +2830,11 @@ def chain_review(request: Request, proposal_id: int):
         members = circle_member_rows(connection, proposal_id, include_removed=True)
         if not any(m["user_id"] == user["id"] for m in members):
             return render(request, "error.html", message="That Circle does not exist.")
+        # Spec 43: a member who left is shown their own "you left" state, not the live Circle.
+        has_left = not any(m["user_id"] == user["id"]
+                           for m in circle_member_rows(connection, proposal_id))
         me = member_row(connection, proposal_id, user["id"])
+        me_raw = member_row(connection, proposal_id, user["id"], include_removed=True)
         tasks = circle_task_rows(connection, proposal_id)
         cycles = viable_cycles(connection, proposal_id)
         my_cycle = next((c for c in cycles if user["id"] in c), None)
@@ -2871,7 +2885,8 @@ def chain_review(request: Request, proposal_id: int):
                 expires_in = ""
     return render(
         request, "chain_review.html", page="circle", proposal=circle, members=members,
-        me=me, tasks=tasks, assignments=assignments, cycles=cycles, my_cycle=my_cycle,
+        me=me, me_raw=me_raw, has_left=has_left, tasks=tasks, assignments=assignments, cycles=cycles,
+        my_cycle=my_cycle,
         loop_names=loop_names, start_proposal=start_proposal, recovery_case=recovery_case,
         history=history, bonuses=bonuses, progress=progress, messages=messages,
         expires_in=expires_in, confirmed_in_cycle=confirmed_in_cycle,
@@ -2937,12 +2952,14 @@ def chain_respond(request: Request, proposal_id: int, response: str = Form(...))
         if not circle or circle["status"] != "pending":
             return redirect_toast(f"/chains/{proposal_id}",
                                   "This Circle is no longer accepting replies.")
-        me = member_row(connection, proposal_id, user["id"])
+        # include_removed: a member who left must still be able to rejoin.
+        me = member_row(connection, proposal_id, user["id"], include_removed=True)
         if not me:
             return redirect_toast(f"/chains/{proposal_id}", "You are not part of this Circle.")
         if response == "declined":
             if me["selected_request_id"]:
                 deselect_circle_task(connection, proposal_id, user["id"])
+            invalidate_start_proposal(connection, proposal_id)
             connection.execute(
                 """UPDATE chain_members SET response='declined', responded_at=?, status=?
                    WHERE proposal_id=? AND user_id=?""",
@@ -2960,12 +2977,24 @@ def chain_respond(request: Request, proposal_id: int, response: str = Form(...))
             if len(circle_member_rows(connection, proposal_id)) < CIRCLE_MIN_MEMBERS:
                 dissolve_circle(connection, proposal_id,
                                 "This Circle no longer has enough neighbours to form a loop.")
-            return redirect_toast("/chain-invitations", "You left this Circle suggestion.")
+            return redirect_toast(f"/chains/{proposal_id}", "You left this Circle suggestion.")
         connection.execute(
             """UPDATE chain_members SET response='accepted', responded_at=?,
-                   status=CASE WHEN selected_request_id IS NULL THEN ? ELSE ? END
+                   status=CASE WHEN selected_request_id IS NULL THEN ? ELSE ? END,
+                   removed_at=NULL, removal_reason=NULL
                WHERE proposal_id=? AND user_id=?""",
             (now(), MEMBER_PENDING, MEMBER_SELECTED, proposal_id, user["id"]))
+        # Rejoining puts the member's own task back under Circle control.
+        selected = connection.execute(
+            "SELECT selected_by_user_id FROM requests WHERE id=?",
+            (me["request_id"],)).fetchone()
+        reservation = (RESERVATION_CIRCLE
+                       if selected and selected["selected_by_user_id"] else RESERVATION_PUBLIC)
+        connection.execute(
+            """UPDATE requests SET reservation_status=? WHERE id=? AND status='open'
+                 AND provider_id IS NULL AND reservation_status=?""",
+            (reservation, me["request_id"], RESERVATION_RELEASED))
+        invalidate_start_proposal(connection, proposal_id)
         for member in circle_member_rows(connection, proposal_id):
             if member["user_id"] != user["id"]:
                 notify(connection, member["user_id"],

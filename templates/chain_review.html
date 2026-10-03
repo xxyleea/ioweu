@@ -152,7 +152,7 @@
         <li><small>Proposed value</small><b>{{ task.requester_value }} credits</b></li>
         <li><small>Reservation</small><b>{{ task.reservation_status.replace('_',' ') }}</b></li>
       </ul>
-      {% if proposal.status in ('pending','start_confirming') %}
+      {% if proposal.status in ('pending','start_confirming') and me %}
         {% if task.request_id == my_own_request %}
           <button class="btn-ghost" disabled>Your own task</button>
         {% elif task.request_id == my_selected %}
@@ -182,20 +182,38 @@
 </section>
 {% endif %}
 
-{# ---- Join / leave while pending (spec 43) ---- #}
-{% if proposal.status == 'pending' and me %}
+{# ---- Participation while pending (spec 43) ---- #}
+{% if has_left %}
+<section class="card alert-card">
+  <h2>You are no longer in this Circle</h2>
+  {% if me_raw.removal_reason == 'excluded_by_start_subset' %}
+    <p class="muted">This Circle started with a smaller loop that did not include you. Your task has returned to the board and may be matched into another Circle later.</p>
+  {% elif me_raw.removal_reason == 'task_expired' %}
+    <p class="muted">Your task passed its deadline, so it left this Circle. Post it again to be matched into a new one.</p>
+  {% elif me_raw.removal_reason == 'withdrew_from_active_circle' %}
+    <p class="muted">Your withdrawal was processed and the Circle moved into settlement.</p>
+  {% else %}
+    <p class="muted">You left this Circle. Your task is back on the board and this Circle no longer counts you as a member.</p>
+  {% endif %}
+  {% if proposal.status == 'pending' %}
+  <form method="post" action="/chains/{{ proposal.id }}/respond" style="margin-top:.6rem">
+    <input type="hidden" name="response" value="accepted">
+    <button class="btn-primary btn-sm">Rejoin this Circle</button>
+  </form>
+  {% endif %}
+</section>
+{% elif proposal.status == 'pending' and me %}
 <section class="card">
   <h2>Your participation</h2>
-  {% if me.response == 'pending' %}
-    <p class="muted">Joining is free. You can leave at any time until the Circle activates.</p>
-    <div class="modal-actions">
-      <form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="declined"><button class="btn-ghost danger">Not interested</button></form>
-      <form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="accepted"><button class="btn-primary">Join Circle</button></form>
-    </div>
+  {% if me.selected_request_id %}
+    <p class="success">You joined by picking a task to help with. You can leave at any time until the Circle activates.</p>
   {% else %}
-    <p class="success">You joined. {% if me.selected_request_id %}You selected a task.{% else %}Pick one task you can help with.{% endif %}</p>
-    <form method="post" action="/chains/{{ proposal.id }}/respond"><input type="hidden" name="response" value="declined"><button class="btn-ghost danger btn-sm">Leave Circle</button></form>
+    <p class="muted">Pick one task below to join this Circle — choosing “I can help with this” is your commitment.</p>
   {% endif %}
+  <form method="post" action="/chains/{{ proposal.id }}/respond" style="margin-top:.6rem">
+    <input type="hidden" name="response" value="declined">
+    <button class="btn-ghost danger btn-sm">Not interested</button>
+  </form>
 </section>
 {% endif %}
 
