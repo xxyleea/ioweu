@@ -17,7 +17,7 @@
     {% if user.community_helper %}<span class="match-badge">★ Community helper</span>{% endif %}
     <div class="profile-stats">
       <div><span class="stat-big">{{ user.balance }}</span><small>available</small></div>
-      <div><span class="stat-big">{{ user.held_balance }}</span><small>in escrow</small></div>
+      <div><span class="stat-big">{{ user.held_balance }}</span><small>held for active tasks</small></div>
     </div>
     <ul class="profile-meta">
       <li><small>Age</small><b>{{ user.age or '—' }}</b></li>

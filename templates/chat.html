@@ -74,8 +74,8 @@
   <button class="btn-ghost" data-modal-open="complete-modal">✔ Mark as Complete</button>
   {% endif %}
   {% if item.status == 'disputed' %}
-  <button class="btn-ghost" data-modal-open="settlement-modal">⚖️ Propose settlement</button>
-  <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU to mediate</a>
+  <button class="btn-ghost" data-modal-open="settlement-modal">⚖️ Suggest a resolution</button>
+  <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU for a suggested solution</a>
   {% endif %}
 </div>
 
@@ -140,7 +140,7 @@
 <div class="modal" id="complete-modal" hidden>
   <div class="modal-card">
     <h2>Mark as Complete</h2>
-    <p class="muted">{{ item.agreed_value }} credits are held in escrow and released after the three-day dispute window.</p>
+    <p class="muted">{{ item.agreed_value }} credits are safely held by IoU and released after the three-day problem-reporting period.</p>
     <form method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete" class="modal-form">
       <label>Completion note (optional)<textarea name="note" rows="3" placeholder="What did you do? Anything the owner should know?"></textarea></label>
       <label>Upload evidence (required, up to 3 files)<input type="file" name="evidence" accept=".png,.jpg,.jpeg,.pdf,.txt" multiple required></label>
@@ -159,7 +159,7 @@
     {% if item.completion_note %}<p class="review-note">"{{ item.completion_note }}"</p>{% endif %}
     {% set ev = item.completion_evidence | from_json if item.completion_evidence else [] %}
     {% if ev %}<p class="muted">📎 {{ ev|length }} file(s) attached — <a href="/requests/{{ item.id }}/review">open full review</a></p>{% endif %}
-    <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits will remain held for three days after confirmation.</p>
+    <p class="hero-credits"><b>{{ item.agreed_value }}</b> credits will stay safely held for three days after confirmation.</p>
     <div class="modal-actions">
       <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise dispute</a>
       <form method="post" action="/requests/{{ item.id }}/review/confirm"><button class="btn-primary">Confirm &amp; start three-day hold</button></form>
@@ -171,7 +171,7 @@
 {% if item.status == 'disputed' %}
 <div class="modal" id="settlement-modal" hidden>
   <div class="modal-card">
-    <h2>Propose a settlement</h2>
+    <h2>Suggest a resolution</h2>
     <p class="muted">{{ item.agreed_value }} credits are frozen. Propose how many go back to the requester.</p>
     <form method="post" action="/requests/{{ item.id }}/settlement" class="modal-form">
       <label>Refund to requester (0–{{ item.agreed_value }})<input type="number" name="amount" min="0" max="{{ item.agreed_value }}" value="{{ item.agreed_value // 2 }}" required></label>

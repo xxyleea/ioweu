@@ -29,6 +29,11 @@
     <span class="stat-big">{{ user.balance }}</span>
     <span class="stat-sub">{{ active_items|length }} active exchange{% if active_items|length != 1 %}s{% endif %} · <a href="/history">history →</a></span>
   </div>
+  <div class="card history-link-card">
+    <div><h2>🔄 Circular task chains</h2><p class="muted">Trade help around a small trusted group. No credits move until everyone accepts.</p></div>
+    <a class="btn-ghost" href="/chain-invitations">Invitations →</a>
+    <a class="btn-ghost" href="/chains/suggestions">Find a match →</a>
+  </div>
 </div>
 
 {% if action_count or action_notifs %}
@@ -71,16 +76,9 @@
 <div class="card history-link-card">
   <div>
     <h2>Credit activity</h2>
-    <p class="muted">Escrow holds, payments, refunds and kudos bonuses.</p>
+    <p class="muted">Held credits, payments, refunds and thank-you bonuses.</p>
   </div>
 
-  <div class="card history-link-card">
-    <div>
-      <h2>Direct exchanges &amp; chains</h2>
-      <p class="muted">Find compatible neighbour needs and reduce unnecessary credit movement.</p>
-    </div>
-    <a class="btn-ghost" href="/exchange-matches">Explore matches →</a>
-  </div>
   <a class="btn-ghost" href="/history">View history →</a>
 </div>
 

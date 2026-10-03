@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}IoU · Chain invitations{% endblock %}
+{% block content %}
+<header class="page-head"><div><h1>🔄 Chain invitations</h1><p class="muted">Review every task before you opt in.</p></div></header>
+<div class="exchange-table">
+{% for p in proposals %}
+  <a class="exchange-row card" href="/chains/{{ p.id }}"><div class="ex-main"><b>Task chain #{{ p.id }}</b><small class="muted">{{ p.accepted_count }}/{{ p.member_count }} accepted · expires {{ p.expires_at[:16].replace('T',' ') }}</small></div><div class="ex-side"><span class="status">{{ p.status }}</span><small>{{ p.response }}</small></div></a>
+{% else %}<div class="card"><p class="empty">No chain invitations yet. <a href="/chains/suggestions">Find a circular match →</a></p></div>{% endfor %}
+</div>
+{% endblock %}

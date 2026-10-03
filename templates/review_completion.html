@@ -5,7 +5,7 @@
 <header class="page-head"><div>
   <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
   <h1 style="margin-top:.8rem">Review Completion</h1>
-  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits in escrow</p>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits held safely by IoU</p>
 </div></header>
 
 <section class="card">
@@ -24,7 +24,7 @@
 
 <section class="card">
   <h2>Your decision</h2>
-  <p class="muted">Confirming starts a three-day dispute window. <b>{{ item.agreed_value }} credits</b> stay held in escrow and are released automatically afterward unless a dispute is opened.</p>
+  <p class="muted">Confirming starts a three-day problem-reporting period. <b>{{ item.agreed_value }} credits</b> stay held safely and are released automatically afterward unless a problem is reported.</p>
   <div class="modal-actions">
     <a class="btn-ghost danger" href="/requests/{{ item.id }}/dispute">Raise Dispute</a>
     <button class="btn-primary" data-modal-open="release-modal">Confirm Completion</button>

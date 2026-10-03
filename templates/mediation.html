@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}IoU · Mediation{% endblock %}
+{% block title %}IoU · Suggested solution{% endblock %}
 {% block content %}
 <div class="stack">
 <header class="page-head"><div>
   <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
   <h1 style="margin-top:.8rem">Dispute Resolution</h1>
-  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits frozen</p>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits held while this is reviewed</p>
 </div></header>
 
 <section class="card">
@@ -18,7 +18,7 @@
 </section>
 
 <section class="card mediation-suggestion">
-  <h2>⚖️ Suggested Resolution</h2>
+  <h2>⚖️ IoU's suggested solution</h2>
   <p class="suggestion-amount">Refund <b>{{ suggestion.amount }}</b> of {{ item.agreed_value }} credits to the requester; the helper keeps {{ item.agreed_value - suggestion.amount }}.</p>
   <p class="muted">{{ suggestion.reason }}</p>
   {% if my_accept %}

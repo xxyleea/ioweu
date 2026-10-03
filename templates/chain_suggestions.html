@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}IoU · Task-chain invitations{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div><h1>🔄 Possible task chains</h1><p class="muted">IoU found open tasks with similar values. Owners can volunteer to complete one task and have another completed for them.</p></div>
+  <a class="btn-ghost" href="/chain-invitations">My invitations →</a>
+</header>
+<div class="stack">
+{% for match in matches %}
+<section class="card">
+  <h2>{{ match.requests|length }} similar tasks</h2>
+  <p class="muted">{{ match.balance_explanation }}</p>
+  <ul class="simple-list">{% for title in match.titles %}<li>{{ title }} · {{ match.values[loop.index0] }} credits</li>{% endfor %}</ul>
+  <form method="post" action="/chains/propose"><input type="hidden" name="match_index" value="{{ loop.index0 }}"><button class="btn-primary">Invite these task owners</button></form>
+</section>
+{% else %}
+<section class="card empty-card"><p class="empty">There are not yet three open tasks in a similar credit range. Check again when more neighbours post tasks.</p><a class="btn-primary" href="/browse">Browse open tasks</a></section>
+{% endfor %}
+</div>
+{% endblock %}

@@ -43,7 +43,7 @@
       <form method="post" action="/requests/{{ item.id }}/cancel" onsubmit="return confirm('Cancel this request? This cannot be undone.')"><button class="btn-ghost danger">Cancel request</button></form>
       {% endif %}
       {% if item.status == 'disputed' and involved %}
-      <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU to mediate</a>
+      <a class="btn-ghost" href="/requests/{{ item.id }}/mediation">Ask IoU for a suggested solution</a>
       {% endif %}
       {% if item.status in ('completed','resolved') and is_owner %}
         {% set transaction = history | selectattr('request_id', 'equalto', item.id) | first %}
@@ -125,7 +125,7 @@
 <div class="modal" id="confirm-exchange-modal" hidden>
   <div class="modal-card">
     <h2>Confirm Exchange</h2>
-    <p>The agreed value is <b>{{ item.agreed_value }} credits</b>. Once both sides confirm, {{ item.agreed_value }} credits move from the requester's balance into escrow.</p>
+    <p>The agreed value is <b>{{ item.agreed_value }} credits</b>. Once both sides confirm, {{ item.agreed_value }} credits are set aside safely until the task is settled.</p>
     <p class="muted">Escrowed credits remain held for three days after completion is confirmed, allowing a short dispute window.</p>
     <form method="post" action="/requests/{{ item.id }}/confirm-exchange" class="modal-actions">
       <button type="button" class="btn-ghost" data-modal-close>Back</button>
@@ -139,7 +139,7 @@
 <div class="modal" id="complete-modal" hidden>
   <div class="modal-card">
     <h2>Mark as Complete</h2>
-    <p class="muted">{{ item.agreed_value }} credits are held in escrow and released once the owner confirms.</p>
+    <p class="muted">{{ item.agreed_value }} credits are held safely and released once the owner confirms.</p>
     <form method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete" class="modal-form">
       <input type="hidden" name="next" value="/chat/{{ item.id }}">
       <label>Completion note (optional)<textarea name="note" rows="3" placeholder="What did you do? Anything the owner should know?"></textarea></label>

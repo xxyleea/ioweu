@@ -4,7 +4,7 @@
 <header class="page-head"><div>
   <a class="btn-ghost btn-back" href="/requests/{{ item.id }}">← Back</a>
   <h1 style="margin-top:.8rem">Mark as Complete</h1>
-  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits in escrow</p>
+  <p class="muted">{{ item.title }} · {{ item.agreed_value }} credits held safely by IoU</p>
 </div></header>
 
 <form class="card form-card" method="post" enctype="multipart/form-data" action="/requests/{{ item.id }}/complete">

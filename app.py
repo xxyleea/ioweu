@@ -204,6 +204,32 @@ def init_db() -> None:
                 sha256 TEXT NOT NULL, mime_type TEXT, byte_size INTEGER NOT NULL,
                 screening_status TEXT NOT NULL, created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS chain_proposals (
+                id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending',
+                balancing_amount INTEGER NOT NULL DEFAULT 0,
+                balance_explanation TEXT NOT NULL, created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL, activated_at TEXT, cancelled_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS chain_members (
+                proposal_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+                request_id INTEGER NOT NULL, position INTEGER NOT NULL,
+                response TEXT NOT NULL DEFAULT 'pending', responded_at TEXT,
+                PRIMARY KEY(proposal_id, user_id),
+                FOREIGN KEY(proposal_id) REFERENCES chain_proposals(id) ON DELETE CASCADE,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(request_id) REFERENCES requests(id)
+            );
+            CREATE TABLE IF NOT EXISTS chain_tasks (
+                proposal_id INTEGER NOT NULL, request_id INTEGER NOT NULL,
+                requester_id INTEGER NOT NULL, helper_id INTEGER NOT NULL,
+                value INTEGER NOT NULL, PRIMARY KEY(proposal_id, request_id),
+                FOREIGN KEY(proposal_id) REFERENCES chain_proposals(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS chain_messages (
+                id INTEGER PRIMARY KEY, proposal_id INTEGER NOT NULL,
+                sender_id INTEGER, body TEXT NOT NULL, created_at TEXT NOT NULL,
+                FOREIGN KEY(proposal_id) REFERENCES chain_proposals(id) ON DELETE CASCADE
+            );
             """
         )
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(requests)")}
@@ -317,6 +343,8 @@ def current_user(request: Request) -> sqlite3.Row | None:
         return None
     with db() as connection:
         release_due_payments(connection)
+        expire_chain_proposals(connection)
+        ensure_chain_invitations(connection)
         return connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
 
 
@@ -513,6 +541,125 @@ def notify(connection: sqlite3.Connection, user_id: int | None, body: str, link:
         "INSERT INTO notifications(user_id,body,link,kind,created_at) VALUES (?,?,?,?,?)",
         (user_id, body, link, kind, now()),
     )
+
+
+def detect_circular_matches(connection: sqlite3.Connection, max_size: int = 6) -> list[dict[str, Any]]:
+    """Group open tasks with similar values for voluntary task circulation."""
+    if max_size < 3:
+        return []
+    requests = connection.execute(
+        """SELECT r.*, u.name requester_name FROM requests r
+           JOIN users u ON u.id=r.requester_id
+           WHERE r.status='open' AND r.provider_id IS NULL
+           ORDER BY r.requester_value, r.id""").fetchall()
+    by_user: dict[int, sqlite3.Row] = {}
+    for item in requests:
+        by_user.setdefault(item["requester_id"], item)
+    candidates = list(by_user.values())
+    matches = []
+    seen: set[tuple[int, ...]] = set()
+    for start in range(len(candidates)):
+        for size in range(min(max_size, len(candidates) - start), 2, -1):
+            group = candidates[start:start + size]
+            values = [item["requester_value"] or 0 for item in group]
+            if max(values) - min(values) > max(4, round(sum(values) / len(values) * 0.35)):
+                continue
+            request_ids = tuple(item["id"] for item in group)
+            if request_ids in seen:
+                continue
+            seen.add(request_ids)
+            average = round(sum(values) / len(values))
+            matches.append({
+                "users": tuple(item["requester_id"] for item in group),
+                "requests": list(request_ids),
+                "values": values,
+                "titles": [item["title"] for item in group],
+                "balancing_amount": max(values) - min(values),
+                "balance_explanation": (
+                    f"These {len(group)} open tasks are between {min(values)} and {max(values)} credits. "
+                    f"Everyone can choose one other task to complete; the average is {average} credits."
+                ),
+            })
+            break
+    return matches[:10]
+
+
+def expire_chain_proposals(connection: sqlite3.Connection) -> None:
+    expired = connection.execute(
+        """SELECT id FROM chain_proposals
+           WHERE status='pending' AND expires_at <= ?""", (now(),)).fetchall()
+    for proposal in expired:
+        connection.execute(
+            "UPDATE chain_proposals SET status='expired', cancelled_at=? WHERE id=?",
+            (now(), proposal["id"]),
+        )
+        members = connection.execute(
+            "SELECT user_id FROM chain_members WHERE proposal_id=?", (proposal["id"],)
+        ).fetchall()
+        for member in members:
+            notify(connection, member["user_id"],
+                   "A circular task-chain invitation expired.",
+                   f"/chains/{proposal['id']}", kind="info")
+
+
+def create_chain_proposal(connection: sqlite3.Connection, match: dict[str, Any],
+                          days: int = 3) -> int:
+    """Persist an invitation only; requests, escrow, and credits remain untouched."""
+    existing = connection.execute(
+        """SELECT cp.id FROM chain_proposals cp
+           JOIN chain_members cm ON cm.proposal_id=cp.id
+           WHERE cp.status='pending'
+           GROUP BY cp.id
+           HAVING COUNT(*)=? AND SUM(cm.request_id IN (%s))=?"""
+        % ",".join("?" for _ in match["requests"]),
+        (len(match["requests"]), *match["requests"], len(match["requests"])),
+    ).fetchone()
+    if existing:
+        return existing["id"]
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
+    cursor = connection.execute(
+        """INSERT INTO chain_proposals(status,balancing_amount,balance_explanation,created_at,expires_at)
+           VALUES ('pending',?,?,?,?)""",
+        (match["balancing_amount"], match["balance_explanation"], now(), expires),
+    )
+    proposal_id = cursor.lastrowid
+    for position, user_id in enumerate(match["users"]):
+        connection.execute(
+            """INSERT INTO chain_members(proposal_id,user_id,request_id,position)
+               VALUES (?,?,?,?)""",
+            (proposal_id, user_id, match["requests"][position], position),
+        )
+    # A helps B, B helps C, C helps A.
+    for position, request_id in enumerate(match["requests"]):
+        connection.execute(
+            """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value)
+               VALUES (?,?,?,?,?)""",
+            (proposal_id, request_id, match["users"][position],
+            match["users"][(position - 1) % len(match["users"])], match["values"][position]),
+        )
+    for user_id in match["users"]:
+        notify(connection, user_id,
+               "You have been invited to a circular task chain. Review all tasks before accepting.",
+               f"/chains/{proposal_id}", kind="action")
+    return proposal_id
+
+
+def ensure_chain_invitations(connection: sqlite3.Connection) -> None:
+    for match in detect_circular_matches(connection):
+        create_chain_proposal(connection, match)
+
+
+def chain_for_user(connection: sqlite3.Connection, proposal_id: int, user_id: int):
+    return connection.execute(
+        """SELECT cp.*, cm.user_id, cm.request_id, cm.position, cm.response,
+                  r.title, r.description, r.category, r.requester_value,
+                  u.name requester_name
+           FROM chain_proposals cp JOIN chain_members cm ON cm.proposal_id=cp.id
+           JOIN requests r ON r.id=cm.request_id JOIN users u ON u.id=cm.user_id
+           WHERE cp.id=? AND EXISTS (SELECT 1 FROM chain_members x
+                                     WHERE x.proposal_id=cp.id AND x.user_id=?)
+             AND (cp.status != 'active' OR cm.response='accepted')
+           ORDER BY cm.position""", (proposal_id, user_id)).fetchall()
 
 
 STATUS_LABELS = {
@@ -768,83 +915,6 @@ def load_disputes(connection: sqlite3.Connection):
     ).fetchall()
 
 
-def build_exchange_matches(connection: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:
-    """Find small skill-compatible task chains without changing task ownership."""
-    users = connection.execute(
-        "SELECT id, name, skills FROM users"
-    ).fetchall()
-    user_by_id = {row["id"]: row for row in users}
-    requests = connection.execute(
-        """SELECT r.*, u.name requester_name FROM requests r
-           JOIN users u ON u.id=r.requester_id
-           WHERE r.status='open' AND r.provider_id IS NULL
-           ORDER BY r.created_at DESC"""
-    ).fetchall()
-    skills_by_user = {
-        row["id"]: {value.strip().lower() for value in (row["skills"] or "").split(",") if value.strip()}
-        for row in users
-    }
-    requester_rows = connection.execute(
-        "SELECT id, skills FROM users WHERE id IN (SELECT requester_id FROM requests WHERE status='open')"
-    ).fetchall()
-    skills_by_user.update({
-        row["id"]: {value.strip().lower() for value in (row["skills"] or "").split(",") if value.strip()}
-        for row in requester_rows
-    })
-
-    proposals: list[dict[str, Any]] = []
-    for first in requests:
-        first_helpers = [
-            candidate for candidate in users
-            if candidate["id"] != first["requester_id"]
-            and skills_by_user.get(candidate["id"], set())
-            & {value.lower() for value in SKILL_TREE.get(first["category"], ())}
-        ]
-        for helper in first_helpers:
-            second = next(
-                (item for item in requests
-                 if item["requester_id"] == helper["id"]
-                 and item["requester_id"] != first["requester_id"]
-                 and skills_by_user.get(first["requester_id"], set())
-                 & {value.lower() for value in SKILL_TREE.get(item["category"], ())}),
-                None,
-            )
-            if second:
-                proposals.append({
-                    "kind": "direct_or_chain",
-                    "members": [first["requester_name"], helper["name"]],
-                    "tasks": [first, second],
-                    "credit_difference": abs((first["requester_value"] or 0) - (second["requester_value"] or 0)),
-                    "explanation": "These residents have compatible needs and skills; the lower-valued task can be balanced with credits.",
-                })
-                third = next(
-                    (item for item in requests
-                     if item["requester_id"] not in {first["requester_id"], helper["id"]}
-                     and skills_by_user.get(item["requester_id"], set())
-                     & {value.lower() for value in SKILL_TREE.get(first["category"], ())}
-                     and skills_by_user.get(helper["id"], set())
-                     & {value.lower() for value in SKILL_TREE.get(item["category"], ())}
-                     and skills_by_user.get(first["requester_id"], set())
-                     & {value.lower() for value in SKILL_TREE.get(item["category"], ())}),
-                    None,
-                )
-                if third:
-                    proposals.append({
-                        "kind": "closed_chain",
-                        "members": [first["requester_name"], helper["name"], third["requester_name"]],
-                        "tasks": [first, second, third],
-                        "credit_difference": max(
-                            (item["requester_value"] or 0) for item in (first, second, third)
-                        ) - min((item["requester_value"] or 0) for item in (first, second, third)),
-                        "explanation": "This three-person loop can route help around the group; only unequal task values need credit balancing.",
-                    })
-    unique: dict[tuple[int, ...], dict[str, Any]] = {}
-    for proposal in proposals:
-        key = tuple(item["id"] for item in proposal["tasks"])
-        unique.setdefault(key, proposal)
-    return list(unique.values())[:20]
-
-
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     user = current_user(request)
@@ -894,7 +964,6 @@ def home(request: Request):
                    WHERE provider_id=? AND status IN ('confirmed','scheduled','in_progress','completion_submitted')""",
                 (user["id"],)).fetchone()["s"],
         }
-        exchange_matches = build_exchange_matches(connection, user["id"])
     return render(
         request,
         "dashboard.html",
@@ -911,18 +980,7 @@ def home(request: Request):
         recommendations=recommendations,
         stats=stats,
         task_categories=TASK_CATEGORIES,
-        exchange_matches=exchange_matches,
     )
-
-
-@app.get("/exchange-matches", response_class=HTMLResponse)
-def exchange_matches(request: Request):
-    user = current_user(request)
-    if not user:
-        return RedirectResponse("/login", status_code=303)
-    with db() as connection:
-        matches = build_exchange_matches(connection, user["id"])
-    return render(request, "exchange_matches.html", page="browse", matches=matches)
 
 
 @app.get("/history", response_class=HTMLResponse)
@@ -936,6 +994,196 @@ def credit_history(request: Request):
                WHERE l.user_id=? ORDER BY l.created_at DESC""", (user["id"],)
         ).fetchall()
     return render(request, "history.html", page="account", ledger=ledger)
+
+
+@app.get("/chain-invitations", response_class=HTMLResponse)
+def chain_invitations(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        expire_chain_proposals(connection)
+        ensure_chain_invitations(connection)
+        proposals = connection.execute(
+            """SELECT cp.*, cm.response, COUNT(allm.user_id) member_count,
+                      SUM(allm.response='accepted') accepted_count
+               FROM chain_proposals cp JOIN chain_members cm ON cm.proposal_id=cp.id
+               JOIN chain_members allm ON allm.proposal_id=cp.id
+               WHERE cm.user_id=? GROUP BY cp.id ORDER BY cp.created_at DESC""",
+            (user["id"],)).fetchall()
+    return render(request, "chain_invitations.html", page="home", proposals=proposals)
+
+
+@app.get("/chains/suggestions", response_class=HTMLResponse)
+def chain_suggestions(request: Request):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        ensure_chain_invitations(connection)
+        matches = [m for m in detect_circular_matches(connection)
+                   if user["id"] in m["users"]]
+    return render(request, "chain_suggestions.html", page="home", matches=matches)
+
+
+@app.post("/chains/propose")
+def propose_chain(request: Request, match_index: int = Form(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        matches = [m for m in detect_circular_matches(connection) if user["id"] in m["users"]]
+        if match_index < 0 or match_index >= len(matches):
+            return RedirectResponse("/chains/suggestions", status_code=303)
+        proposal_id = create_chain_proposal(connection, matches[match_index])
+    return redirect_toast(f"/chains/{proposal_id}", "Chain invitations sent")
+
+
+@app.get("/chains/{proposal_id}", response_class=HTMLResponse)
+def chain_review(request: Request, proposal_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        rows = chain_for_user(connection, proposal_id, user["id"])
+        if not rows:
+            return render(request, "error.html", message="That chain invitation does not exist.")
+        messages = connection.execute(
+            """SELECT cm.*, u.name sender_name FROM chain_messages cm
+               LEFT JOIN users u ON u.id=cm.sender_id
+               WHERE proposal_id=? ORDER BY cm.id""", (proposal_id,)).fetchall()
+        tasks = connection.execute(
+            """SELECT ct.*, r.title, r.requester_value, u.name requester_name,
+                      h.name helper_name
+               FROM chain_tasks ct JOIN requests r ON r.id=ct.request_id
+               JOIN users u ON u.id=ct.requester_id
+               JOIN users h ON h.id=ct.helper_id
+               WHERE ct.proposal_id=? ORDER BY ct.request_id""",
+            (proposal_id,),
+        ).fetchall()
+    return render(request, "chain_review.html", proposal=rows[0], members=rows,
+                  tasks=tasks,
+                  messages=messages, my_response=next(
+                      row["response"] for row in rows if row["user_id"] == user["id"]))
+
+
+@app.post("/chains/{proposal_id}/respond")
+def chain_respond(request: Request, proposal_id: int, response: str = Form(...)):
+    user = current_user(request)
+    if not user or response not in {"accepted", "declined"}:
+        return RedirectResponse("/login" if not user else f"/chains/{proposal_id}", status_code=303)
+    with db() as connection:
+        expire_chain_proposals(connection)
+        rows = chain_for_user(connection, proposal_id, user["id"])
+        if not rows or rows[0]["status"] != "pending":
+            return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
+        connection.execute(
+            """UPDATE chain_members SET response=?, responded_at=?
+               WHERE proposal_id=? AND user_id=?""",
+            (response, now(), proposal_id, user["id"]),
+        )
+        accepted_rows = connection.execute(
+            """SELECT user_id, request_id FROM chain_members
+               WHERE proposal_id=? AND response='accepted' ORDER BY position""",
+            (proposal_id,),
+        ).fetchall()
+        if len(accepted_rows) >= 3:
+            connection.execute("DELETE FROM chain_tasks WHERE proposal_id=?", (proposal_id,))
+            for position, member in enumerate(accepted_rows):
+                helper = accepted_rows[(position - 1) % len(accepted_rows)]
+                value = connection.execute(
+                    "SELECT requester_value FROM requests WHERE id=?",
+                    (member["request_id"],),
+                ).fetchone()["requester_value"] or 0
+                connection.execute(
+                    """INSERT INTO chain_tasks(proposal_id,request_id,requester_id,helper_id,value)
+                       VALUES (?,?,?,?,?)""",
+                    (proposal_id, member["request_id"], member["user_id"],
+                     helper["user_id"], value),
+                )
+                connection.execute(
+                    """UPDATE requests
+                       SET provider_id=?, provider_value=requester_value,
+                           provider_buffer=requester_buffer, status='negotiating',
+                           negotiation_deadline=?
+                       WHERE id=? AND status='open'""",
+                    (helper["user_id"],
+                     (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(timespec="seconds"),
+                     member["request_id"]),
+                )
+                notify(
+                    connection,
+                    helper["user_id"],
+                    "You were assigned a task in an active chain. Open it to agree the final value.",
+                    f"/chat/{member['request_id']}",
+                    kind="action",
+                )
+            connection.execute(
+                "UPDATE chain_proposals SET status='active', activated_at=? WHERE id=?",
+                (now(), proposal_id))
+            body = (
+                f"A task chain is active with {len(accepted_rows)} participants. "
+                "Each participant completes one other task; ordinary task safeguards still apply."
+            )
+        elif response == "declined":
+            body = (
+                "A participant declined, but the invitation remains open while IoU looks "
+                "for the minimum of three willing participants."
+            )
+        else:
+            body = "A participant joined the task chain invitation."
+        members = connection.execute(
+            "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
+            (proposal_id, user["id"])).fetchall()
+        for member in members:
+            notify(connection, member["user_id"], body, f"/chains/{proposal_id}",
+                   kind="action" if response == "accepted" else "info")
+    return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
+
+
+@app.post("/chains/{proposal_id}/leave")
+def chain_leave(request: Request, proposal_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        rows = chain_for_user(connection, proposal_id, user["id"])
+        if rows and rows[0]["status"] == "pending":
+            connection.execute(
+                "UPDATE chain_members SET response='left', responded_at=? WHERE proposal_id=? AND user_id=?",
+                (now(), proposal_id, user["id"]))
+            remaining = connection.execute(
+                "SELECT COUNT(*) c FROM chain_members WHERE proposal_id=? AND response!='left'",
+                (proposal_id,),
+            ).fetchone()["c"]
+            if remaining < 3:
+                connection.execute(
+                    "UPDATE chain_proposals SET status='cancelled', cancelled_at=? WHERE id=?",
+                    (now(), proposal_id))
+            for member in connection.execute(
+                "SELECT user_id FROM chain_members WHERE proposal_id=? AND user_id!=?",
+                (proposal_id, user["id"])):
+                notify(connection, member["user_id"], "A participant left the task-chain invitation.",
+                       f"/chains/{proposal_id}")
+    return RedirectResponse("/chain-invitations", status_code=303)
+
+
+@app.post("/chains/{proposal_id}/messages")
+def chain_message(request: Request, proposal_id: int, body: str = Form(...)):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        rows = chain_for_user(connection, proposal_id, user["id"])
+        if rows and body.strip():
+            connection.execute(
+                "INSERT INTO chain_messages(proposal_id,sender_id,body,created_at) VALUES (?,?,?,?)",
+                (proposal_id, user["id"], body.strip(), now()))
+            for member in rows:
+                if member["user_id"] != user["id"]:
+                    notify(connection, member["user_id"], "New message in your circular task chain.",
+                            f"/chains/{proposal_id}", kind="info")
+    return RedirectResponse(f"/chains/{proposal_id}", status_code=303)
 
 
 @app.get("/notifications", response_class=HTMLResponse)
