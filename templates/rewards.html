@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}IoU · Rewards{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Rewards</h1>
+    <p class="muted">A little something back for helping out.</p>
+  </div>
+  <div class="rw-head-credits">
+    <span class="stat-label">Available credits</span>
+    <b>{{ user.balance }}</b>
+    <a class="btn-ghost btn-sm" href="/history">View credit history →</a>
+  </div>
+</header>
+
+{% if redeem_error == 'balance' %}
+<p class="error">Your credits have changed — please try again.</p>
+{% elif redeem_error %}
+<p class="error">That reward isn't available right now.</p>
+{% endif %}
+
+<section class="card rw-hero">
+  <span class="rw-hero-emoji">✨</span>
+  <div>
+    <span class="stat-label">Your credits</span>
+    <span class="rw-hero-num">{{ user.balance }}</span>
+    <p class="muted">Earned by helping your neighbours.</p>
+    <small class="muted">Credits are part of your trust ledger — not cash.</small>
+  </div>
+</section>
+
+{% set featured = rewards | selectattr("featured", "equalto", 1) | list %}
+{% if featured %}
+{% set f = featured[0] %}
+{% set f_used = counts.get(f.id, 0) %}
+<section class="card rw-featured rw-pastel-{{ f.pastel }}">
+  <div class="rw-f-body">
+    <small class="rw-kicker">Featured this week</small>
+    <b class="rw-f-title">{{ f.emoji }} {{ f.title }}</b>
+    <p>{{ f.description }}</p>
+    <small class="muted">{{ f.partner }} · available until {{ f.expiry_date }}</small>
+  </div>
+  <div class="rw-f-side">
+    <span class="rw-cost">{{ f.credit_cost }} credits</span>
+    {% if f_used >= f.max_per_user %}
+    <button class="btn-ghost" disabled>✓ Redeemed</button>
+    {% elif user.balance < f.credit_cost %}
+    <small class="muted">You need {{ f.credit_cost - user.balance }} more credits.</small>
+    <a class="btn-ghost" href="/browse">Earn more credits →</a>
+    {% else %}
+    <button class="btn-primary" data-redeem-open="{{ f.id }}">Redeem</button>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+<section class="home-section">
+  <h2 class="section-title">Browse rewards</h2>
+  <div class="filter-row" id="rw-chips">
+    {% for key, label in categories %}
+    <button class="filter-chip {% if key == 'all' %}active{% endif %}" data-rw-cat="{{ key }}">{{ label }}</button>
+    {% endfor %}
+  </div>
+  <div class="rw-grid">
+    {% for r in rewards %}
+    <div class="rw-card card rw-pastel-{{ r.pastel }}" data-rw-card data-category="{{ r.category }}"
+         data-id="{{ r.id }}" data-title="{{ r.title }}" data-emoji="{{ r.emoji }}"
+         data-cost="{{ r.credit_cost }}" data-desc="{{ r.description }}" data-partner="{{ r.partner }}"
+         data-terms="{{ r.terms }}" data-expiry="{{ r.expiry_date }}" data-used="{{ counts.get(r.id, 0) }}"
+         data-max="{{ r.max_per_user }}" data-balance="{{ user.balance }}">
+      <span class="rw-emoji">{{ r.emoji }}</span>
+      <b>{{ r.title }}</b>
+      <p class="muted">{{ r.description }}</p>
+      <div class="rw-meta">
+        <span class="rw-cost">{{ r.credit_cost }} credits</span>
+        {% if counts.get(r.id, 0) >= r.max_per_user %}
+        <span class="rw-state">✓ Redeemed {{ counts.get(r.id, 0) }}/{{ r.max_per_user }}</span>
+        {% elif user.balance < r.credit_cost %}
+        <span class="rw-state muted">need {{ r.credit_cost - user.balance }} more</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="home-section">
+  <h2 class="section-title">My rewards</h2>
+  <div class="board-tabs" id="rw-tabs">
+    <button class="btab active" data-rw-tab="available">Available</button>
+    <button class="btab" data-rw-tab="used">Used</button>
+    <button class="btab" data-rw-tab="expired">Expired</button>
+  </div>
+  {% for tab in ("available", "used", "expired") %}
+  <div class="exchange-table" data-rw-panel="{{ tab }}" {% if tab != "available" %}hidden{% endif %}>
+    {% set rows = redemptions | selectattr("status", "equalto", tab) | list %}
+    {% for rr in rows %}
+    <div class="exchange-row card">
+      <span class="thread-av">{{ rr.emoji }}</span>
+      <div class="ex-main">
+        <b>{{ rr.title }}</b>
+        <small class="muted">{{ rr.credits_spent }} credits · {% if tab == "available" %}expires {{ rr.expires_at or "—" }}{% elif tab == "used" %}used{% else %}expired{% endif %}</small>
+      </div>
+      <div class="ex-side">
+        {% if tab == "available" %}
+        <code class="rw-code">{{ rr.code }}</code>
+        <button class="btn-ghost btn-sm" data-copy="{{ rr.code }}">Copy code</button>
+        {% else %}
+        <span class="status s-resolved">{{ tab }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="card"><p class="empty">{% if tab == "available" %}Nothing here yet. Your first little reward is waiting — <a href="#" data-rw-browse>browse rewards →</a>{% else %}No {{ tab }} rewards.{% endif %}</p></div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</section>
+
+<section class="card rw-reminder">
+  <div>
+    <b>A little reminder</b>
+    <p class="muted" style="margin:.2rem 0 0">Your credits started with someone you helped.</p>
+  </div>
+  <a class="btn-primary" href="/browse">Help a neighbour</a>
+</section>
+
+<!-- reward detail modal -->
+<div class="modal" id="rw-detail" hidden>
+  <div class="modal-card">
+    <span class="rw-emoji" id="rwdEmoji">✨</span>
+    <h2 id="rwdTitle">Reward</h2>
+    <p class="rw-cost" id="rwdCost">0 credits</p>
+    <p id="rwdDesc" class="muted"></p>
+    <dl class="ctx-grid">
+      <div><dt>From</dt><dd id="rwdPartner"></dd></div>
+      <div><dt>Use</dt><dd id="rwdTerms"></dd></div>
+      <div><dt>Valid until</dt><dd id="rwdExpiry"></dd></div>
+      <div><dt>Redeemed</dt><dd id="rwdUsed"></dd></div>
+    </dl>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" data-modal-close>Back</button>
+      <button class="btn-primary" id="rwdRedeem">Redeem</button>
+    </div>
+  </div>
+</div>
+
+<!-- redeem confirmation modal -->
+<div class="modal" id="rw-confirm" hidden>
+  <div class="modal-card">
+    <h2>You're about to spend</h2>
+    <p class="rw-hero-num" id="rwcCost" style="font-size:2rem">0</p>
+    <p class="muted">credits — you'll have <b id="rwcLeft"></b> left.</p>
+    <p>Reward: <b id="rwcTitle"></b></p>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" data-modal-close>Cancel</button>
+      <form method="post" id="rwcForm"><button class="btn-primary">Redeem reward</button></form>
+    </div>
+  </div>
+</div>
+
+{% if claimed %}
+<!-- claimed moment -->
+<div class="modal" id="rw-claimed" hidden>
+  <div class="modal-card rw-claimed-card">
+    <p class="rw-kicker">✨ Reward unlocked</p>
+    <span class="rw-emoji">{{ claimed.emoji }}</span>
+    <h2>{{ claimed.title }}</h2>
+    <p class="muted">You spent {{ claimed.credits_spent }} credits. You now have <b>{{ user.balance }}</b> credits.</p>
+    <div class="rw-coupon">
+      <b>{{ claimed.title }}</b>
+      <code class="rw-code">{{ claimed.code }}</code>
+      <small class="muted">Expires {{ claimed.expires_at or "—" }}</small>
+      <button class="btn-ghost btn-sm" data-copy="{{ claimed.code }}">Copy code</button>
+    </div>
+    <div class="modal-actions">
+      <a class="btn-ghost" href="/history">View history</a>
+      <button class="btn-primary" data-modal-close>View my rewards</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+const cards = [...document.querySelectorAll('[data-rw-card]')];
+const chips = document.querySelectorAll('#rw-chips .filter-chip');
+chips.forEach(c => c.addEventListener('click', () => {
+  chips.forEach(x => x.classList.remove('active'));
+  c.classList.add('active');
+  const cat = c.dataset.rwCat;
+  cards.forEach(card => {
+    card.style.display = (cat === 'all' || card.dataset.category === cat) ? '' : 'none';
+  });
+}));
+
+/* my rewards tabs */
+const tabs = document.querySelectorAll('#rw-tabs .btab');
+tabs.forEach(t => t.addEventListener('click', () => {
+  tabs.forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.querySelectorAll('[data-rw-panel]').forEach(p => {
+    p.hidden = p.dataset.rwPanel !== t.dataset.rwTab;
+  });
+}));
+document.querySelectorAll('[data-rw-browse]').forEach(b => b.addEventListener('click', (e) => {
+  e.preventDefault();
+  document.querySelector('#rw-chips').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}));
+
+/* detail modal */
+const detail = document.getElementById('rw-detail');
+let current = null;
+function openDetail(d) {
+  current = d;
+  document.getElementById('rwdEmoji').textContent = d.emoji;
+  document.getElementById('rwdTitle').textContent = d.title;
+  document.getElementById('rwdCost').textContent = d.cost + ' credits';
+  document.getElementById('rwdDesc').textContent = d.desc;
+  document.getElementById('rwdPartner').textContent = d.partner;
+  document.getElementById('rwdTerms').textContent = d.terms || 'Show your code in person.';
+  document.getElementById('rwdExpiry').textContent = d.expiry || '—';
+  document.getElementById('rwdUsed').textContent = d.used + ' / ' + d.max;
+  const btn = document.getElementById('rwdRedeem');
+  const left = Number(d.balance) - Number(d.cost);
+  if (Number(d.used) >= Number(d.max)) {
+    btn.disabled = true; btn.textContent = '✓ Already redeemed';
+  } else if (left < 0) {
+    btn.disabled = true;
+    btn.textContent = `You need ${-left} more credits — help a neighbour first`;
+  } else {
+    btn.disabled = false;
+    btn.textContent = `Redeem for ${d.cost} credits`;
+  }
+  detail.hidden = false;
+}
+cards.forEach(c => c.addEventListener('click', () => openDetail(c.dataset)));
+document.querySelectorAll('[data-redeem-open]').forEach(b =>
+  b.addEventListener('click', () => {
+    const c = cards.find(x => x.dataset.id === b.dataset.redeemOpen);
+    if (c) openDetail(c.dataset);
+  }));
+
+/* confirm modal */
+const confirmModal = document.getElementById('rw-confirm');
+document.getElementById('rwdRedeem').addEventListener('click', () => {
+  if (!current) return;
+  document.getElementById('rwcCost').textContent = current.cost;
+  document.getElementById('rwcLeft').textContent = Number(current.balance) - Number(current.cost);
+  document.getElementById('rwcTitle').textContent = `${current.emoji} ${current.title}`;
+  document.getElementById('rwcForm').action = `/rewards/${current.id}/redeem`;
+  detail.hidden = true;
+  confirmModal.hidden = false;
+});
+
+/* modal close buttons */
+document.querySelectorAll('[data-modal-close]').forEach(b => b.addEventListener('click', () => {
+  b.closest('.modal').hidden = true;
+}));
+
+/* copy buttons */
+document.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(b.dataset.copy);
+    const orig = b.textContent;
+    b.textContent = 'Copied!';
+    setTimeout(() => { b.textContent = orig; }, 1500);
+  } catch (e) {}
+}));
+
+/* claimed moment */
+const claimed = document.getElementById('rw-claimed');
+if (claimed) claimed.hidden = false;
+</script>
+{% endblock %}
