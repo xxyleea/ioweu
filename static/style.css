@@ -869,3 +869,17 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .chat-file{display:inline-block;padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;font-size:.8rem;margin-bottom:.3rem}
 .consent-block{border:1px solid var(--border);border-radius:12px;padding:.9rem 1rem;background:var(--surface-2, #f7f5f0)}
 .consent-block .field-label{margin-bottom:.4rem}
+
+/* ---------- form text should not inherit label bold ---------- */
+input,textarea,select{font-weight:400}
+
+/* ---------- auth brand logo ---------- */
+.auth-brand img{object-fit:contain}
+
+/* ---------- locked fields ---------- */
+input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
+
+/* ---------- chat rail: back button ---------- */
+.rail-head{padding:.8rem 1.1rem .4rem}
+.rail-back{display:inline-flex;align-items:center;gap:.3rem;font-size:.82rem;font-weight:700;color:var(--muted);text-decoration:none;padding:.35rem .8rem;border-radius:999px;border:1.5px solid var(--line)}
+.rail-back:hover{background:var(--bg);color:var(--ink)}

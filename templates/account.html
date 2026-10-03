@@ -50,9 +50,10 @@
           <label>Neighbourhood<input name="address" value="{{ user.address or '' }}"></label>
         </div>
         <div class="value-form">
-          <label>Age<input name="age" type="number" min="16" max="120" value="{{ user.age or '' }}"></label>
-          <label>Birthday<input name="birthday" type="date" value="{{ user.birthday or '' }}"></label>
+          <label>Age<input name="age" type="number" min="16" max="120" value="{{ user.age or '' }}" readonly title="Locked after registration"></label>
+          <label>Birthday<input name="birthday" type="date" value="{{ user.birthday or '' }}" readonly title="Locked after registration"></label>
         </div>
+        <p class="muted small">Age and birthday are locked after registration to keep the community safe. Contact support if they are wrong.</p>
         <label>Language
           <select name="language">
             <option value="en" {% if user.language == 'en' %}selected{% endif %}>English</option>

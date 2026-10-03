@@ -23,7 +23,6 @@
   </div>
   <label class="sort-label">Sort
     <select id="sort-select">
-      <option value="match">Recommended</option>
       <option value="near">Distance · nearest first</option>
       <option value="newest">Newest</option>
       <option value="credits-desc">Credits · high to low</option>
@@ -74,7 +73,8 @@ btabs.forEach(t => t.addEventListener("click", () => {
   btabs.forEach(x => x.classList.remove("active"));
   t.classList.add("active");
   view = t.dataset.view;
-  sortSelect.value = view === "all" ? "newest" : (view === "nearby" ? "near" : "match");
+  sortSelect.value = view === "nearby" ? "near" : "newest";
+  sortSelect.closest(".sort-label").style.visibility = view === "foryou" ? "hidden" : "visible";
   render();
 }));
 chips.forEach(chip => chip.addEventListener("click", () => {
@@ -84,6 +84,7 @@ chips.forEach(chip => chip.addEventListener("click", () => {
   render();
 }));
 sortSelect.addEventListener("change", render);
+sortSelect.closest(".sort-label").style.visibility = "hidden";
 render();
 </script>
 {% endblock %}

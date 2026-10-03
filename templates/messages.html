@@ -3,8 +3,8 @@
 {% block content %}
 <header class="page-head">
   <div>
-    <h1>Your exchanges</h1>
-    <p class="muted">Every task you're working on with a neighbour, in one place.</p>
+    <h1>Messages</h1>
+    <p class="muted">Your ongoing tasks, grouped by task. Open one to see its conversations.</p>
   </div>
 </header>
 
@@ -13,8 +13,7 @@
   <a class="exchange-row card {% if e.needs %}needs{% endif %}" href="{{ e.href }}">
     <div class="ex-main">
       <b>{{ e.t.title }}{% if e.t.unread_count %}<span class="thread-unread">● {{ e.t.unread_count }}</span>{% endif %}</b>
-      <small class="muted">with {% if e.t.requester_name == user.name %}{{ e.t.provider_name or '…' }}{% else %}{{ e.t.requester_name }}{% endif %}</small>
-      <small class="ex-preview">{{ e.t.last_body[:80] }}</small>
+      <small class="ex-preview">{% if e.t.last_sender_name %}<b class="ex-sender">{{ e.t.last_sender_name }}</b> · {% endif %}{{ e.t.last_body[:80] }}</small>
     </div>
     <div class="ex-side">
       <span class="status s-{{ e.t.status }}">{{ status_labels[e.t.status] if e.t.status in status_labels else e.t.status.replace('_',' ') }}</span>
@@ -23,7 +22,7 @@
     </div>
   </a>
 {% else %}
-  <div class="card"><p class="empty">No exchanges yet. Offer to help someone on the Community board and it appears here. <a href="/browse">Go to Community →</a></p></div>
+  <div class="card"><p class="empty">No messages yet. Offer to help someone on the Community board and it appears here. <a href="/browse">Go to Community →</a></p></div>
 {% endfor %}
 </div>
 {% endblock %}

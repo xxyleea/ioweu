@@ -48,7 +48,10 @@
     <div id="location-block">
     <label>Where is the task?</label>
     <div class="addr-wrap">
-      <input id="new-location" name="location" placeholder="e.g. Kennedy Town" autocomplete="off">
+      <select id="new-location" name="location">
+        <option value="">Choose a district</option>
+        {% for d in hk_districts %}<option value="{{ d }}" {% if user.district == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+      </select>
       {% if user.district %}
       <div class="addr-suggest" id="addr-suggest" hidden>
         <b>📍 Use my address</b><br><small>{{ user.district }}{{ ' · ' if user.address }}{{ user.address }}</small>

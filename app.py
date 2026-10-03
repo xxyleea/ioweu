@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -2264,7 +2264,8 @@ def new_request_page(request: Request):
     if not user:
         return RedirectResponse("/login", status_code=303)
     return render(request, "new_request.html", page="posts",
-                  task_categories=TASK_CATEGORIES, genre_emoji=GENRE_EMOJI)
+                  task_categories=TASK_CATEGORIES, genre_emoji=GENRE_EMOJI,
+                  hk_districts=HK_DISTRICTS)
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -2299,6 +2300,9 @@ def messages_page(request: Request):
                       u.name requester_name, p.name provider_name,
                       (SELECT body FROM messages m WHERE m.request_id=r.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_body,
                       (SELECT created_at FROM messages m WHERE m.request_id=r.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_at,
+                      (SELECT u2.name FROM messages m JOIN users u2 ON u2.id=m.sender_id
+                        WHERE m.request_id=r.id AND m.sender_id IS NOT NULL
+                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_sender_name,
                       (SELECT COUNT(*) FROM messages m WHERE m.request_id=r.id) msg_count,
                       (SELECT COUNT(*) FROM messages m
                         LEFT JOIN thread_reads tr ON tr.request_id=m.request_id AND tr.user_id=?
@@ -2323,7 +2327,7 @@ def messages_page(request: Request):
 
 
 @app.get("/chat/{request_id}", response_class=HTMLResponse)
-def chat_page(request: Request, request_id: int):
+def chat_page(request: Request, request_id: int, with_id: int | None = Query(None)):
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -2352,8 +2356,21 @@ def chat_page(request: Request, request_id: int):
         messages = connection.execute(
             """SELECT m.*, u.name sender_name FROM messages m
                LEFT JOIN users u ON u.id=m.sender_id
-               WHERE m.request_id=? ORDER BY m.created_at, m.id""",
-            (request_id,),
+               WHERE m.request_id=? AND (? IS NULL OR m.kind='system'
+                     OR m.sender_id IN (?, ?))
+               ORDER BY m.created_at, m.id""",
+            (request_id, with_id, user["id"], with_id or 0),
+        ).fetchall()
+        participants = connection.execute(
+            """SELECT u.id, u.name,
+                      (SELECT body FROM messages m WHERE m.request_id=? AND m.sender_id=u.id
+                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_body,
+                      (SELECT created_at FROM messages m WHERE m.request_id=? AND m.sender_id=u.id
+                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_at
+               FROM messages m2 JOIN users u ON u.id=m2.sender_id
+               WHERE m2.request_id=? AND m2.sender_id IS NOT NULL AND m2.sender_id != ?
+               GROUP BY u.id ORDER BY last_at DESC""",
+            (request_id, request_id, request_id, user["id"]),
         ).fetchall()
         pending_offer = pending_message(connection, request_id, "offer")
         pending_meetup = pending_message(connection, request_id, "meetup")
@@ -2366,31 +2383,12 @@ def chat_page(request: Request, request_id: int):
                      (item["provider_id"] == user["id"] and item["confirm_provider"])
         hero = hero_for(item, user["id"], pending_offer, pending_meetup, dispute, my_confirm)
         mark_thread_read(connection, request_id, user["id"])
-        threads = connection.execute(
-            """SELECT r.id, r.title, r.status,
-                      u.name requester_name, p.name provider_name,
-                      (SELECT body FROM messages m WHERE m.request_id=r.id
-                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_body,
-                      (SELECT created_at FROM messages m WHERE m.request_id=r.id
-                        ORDER BY m.created_at DESC, m.id DESC LIMIT 1) last_at,
-                      (SELECT COUNT(*) FROM messages m
-                        LEFT JOIN thread_reads tr ON tr.request_id=m.request_id AND tr.user_id=?
-                        WHERE m.request_id=r.id AND m.sender_id IS NOT NULL AND m.sender_id != ?
-                          AND m.id > COALESCE(tr.last_read_id, 0)) unread_count
-               FROM requests r JOIN users u ON u.id=r.requester_id
-               LEFT JOIN users p ON p.id=r.provider_id
-               WHERE (r.requester_id=? OR r.provider_id=?
-                      OR EXISTS (SELECT 1 FROM request_participants rp
-                                 WHERE rp.request_id=r.id AND rp.user_id=?))
-                 AND EXISTS (SELECT 1 FROM messages m WHERE m.request_id=r.id)
-               ORDER BY last_at DESC""",
-            (user["id"], user["id"], user["id"], user["id"], user["id"]),
-        ).fetchall()
     return render(request, "chat.html", page="messages", item=item, messages=messages,
                   pending_offer=pending_offer, pending_meetup=pending_meetup,
                   pending_settlement=pending_settlement, dispute=dispute, rec=rec,
                   my_confirm=my_confirm, hero=hero, genre_emoji=GENRE_EMOJI,
-                  threads=threads, step_index=STATUS_STEP.get(item["status"], 0),
+                  participants=participants, with_id=with_id,
+                  step_index=STATUS_STEP.get(item["status"], 0),
                   timeline_steps=TIMELINE_STEPS,
                   status_label=STATUS_LABELS.get(item["status"], item["status"]))
 

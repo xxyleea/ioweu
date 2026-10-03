@@ -12,7 +12,7 @@
     {% elif m.kind == 'offer' %}
       {% set meta = m.meta | from_json %}
       <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
-        <div class="chat-av av-special">💰</div>
+        {% if m.sender_id != user.id %}<div class="chat-av av-special">💰</div>{% endif %}
         <div class="chat-bubble special-bubble offer-bubble state-{{ m.status or 'done' }}">
           <small class="chat-who">{{ m.sender_name }}</small>
           <b class="card-amount">{{ meta.amount }} credits</b>
@@ -33,7 +33,7 @@
     {% elif m.kind == 'meetup' %}
       {% set meta = m.meta | from_json %}
       <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
-        <div class="chat-av av-special">📅</div>
+        {% if m.sender_id != user.id %}<div class="chat-av av-special">📅</div>{% endif %}
         <div class="chat-bubble special-bubble meetup-bubble state-{{ m.status or 'done' }}">
           <small class="chat-who">{{ m.sender_name }}</small>
           <b class="card-amount">{{ meta.date }} · {{ meta.time }}</b>
@@ -53,7 +53,7 @@
     {% elif m.kind == 'settlement' %}
       {% set meta = m.meta | from_json %}
       <div class="chat-row {% if m.sender_id == user.id %}mine{% endif %}">
-        <div class="chat-av av-special">⚖️</div>
+        {% if m.sender_id != user.id %}<div class="chat-av av-special">⚖️</div>{% endif %}
         <div class="chat-bubble special-bubble settlement-bubble state-{{ m.status or 'done' }}">
           <small class="chat-who">{{ m.sender_name }}</small>
           <b class="card-amount">Refund {{ meta.amount }} credits</b>

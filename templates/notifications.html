@@ -4,16 +4,10 @@
 <header class="page-head">
   <div>
     <h1>Notifications</h1>
-    <p class="muted">System updates and new messages, all in one place.</p>
+    <p class="muted">Updates about your tasks, credits and disputes.</p>
   </div>
 </header>
 
-<div class="notif-tabs">
-  <a class="tab {% if tab == 'system' %}active{% endif %}" href="/notifications?tab=system">System{% if notifs %}<span class="tab-count">{{ notifs|selectattr('is_read','equalto',0)|list|length }}</span>{% endif %}</a>
-  <a class="tab {% if tab == 'messages' %}active{% endif %}" href="/notifications?tab=messages">Messages{% if unread_msgs %}<span class="tab-count">{{ unread_msgs }}</span>{% endif %}</a>
-</div>
-
-{% if tab == 'system' %}
 <div class="card notif-card">
   {% for n in notifs %}
   <div class="notif-row {% if not n.is_read %}unread{% endif %}">
@@ -26,21 +20,4 @@
   </div>
   {% else %}<p class="empty">No notifications yet.</p>{% endfor %}
 </div>
-{% else %}
-<div class="card notif-card">
-  {% for t in threads %}
-  <div class="notif-row">
-    <span class="notif-kind k-info">Chat</span>
-    <div class="notif-body">
-      <b>{{ t.title }}</b>
-      <small class="notif-sub">{{ t.requester_name }}{% if t.provider_name %} · {{ t.provider_name }}{% endif %} — {{ (t.last_body or '')[:80] }}</small>
-    </div>
-    <div class="notif-side">
-      <small class="muted">{{ (t.last_at or '')[:16].replace('T',' ') }}</small>
-      <a class="btn-ghost btn-sm" href="/chat/{{ t.id }}">Open →</a>
-    </div>
-  </div>
-  {% else %}<p class="empty">No conversations yet.</p>{% endfor %}
-</div>
-{% endif %}
 {% endblock %}

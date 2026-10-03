@@ -4,15 +4,22 @@
 {% block content %}
 <div class="chat-workspace">
 <aside class="chat-threads">
-  <h3>Exchanges</h3>
-  {% for t in threads %}
-  <a class="ws-thread {% if t.id == item.id %}active{% endif %}" href="/chat/{{ t.id }}">
-    <span class="thread-av">{{ t.title[0]|upper }}</span>
+  <div class="rail-head"><a class="rail-back" href="/messages">← All messages</a></div>
+  <h3>{{ item.title }}</h3>
+  <a class="ws-thread {% if not with_id %}active{% endif %}" href="/chat/{{ item.id }}">
+    <span class="thread-av">👥</span>
     <span class="thread-body">
-      <span class="thread-top"><b>{{ t.title }}</b><small>{{ t.last_at|hktime }}</small></span>
-      <span class="thread-preview">{{ t.last_body or 'No messages yet' }}</span>
+      <span class="thread-top"><b>Everyone</b></span>
+      <span class="thread-preview">Whole group conversation</span>
     </span>
-    {% if t.unread_count %}<span class="thread-unread">{{ t.unread_count }}</span>{% endif %}
+  </a>
+  {% for p in participants %}
+  <a class="ws-thread {% if with_id == p.id %}active{% endif %}" href="/chat/{{ item.id }}?with={{ p.id }}">
+    <span class="thread-av">{{ p.name[0]|upper }}</span>
+    <span class="thread-body">
+      <span class="thread-top"><b>{{ p.name }}</b><small>{{ p.last_at|hktime }}</small></span>
+      <span class="thread-preview">{{ p.last_body or 'No messages yet' }}</span>
+    </span>
   </a>
   {% endfor %}
 </aside>
