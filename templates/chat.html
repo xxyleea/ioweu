@@ -3,7 +3,7 @@
 {% block content_class %}content-chat{% endblock %}
 {% block content %}
 <div class="chat-workspace">
-<aside class="chat-threads card">
+<aside class="chat-threads">
   <h3>Exchanges</h3>
   {% for t in threads %}
   <a class="ws-thread {% if t.id == item.id %}active{% endif %}" href="/chat/{{ t.id }}">
@@ -14,9 +14,8 @@
   {% endfor %}
 </aside>
 
-<div class="chat-main">
-<div class="ws-header">
-  <details class="ws-context card" open>
+<div class="chat-main card">
+  <details class="ws-context">
     <summary>
       <span class="tt-emoji">{{ genre_emoji[item.category] if item.category in genre_emoji else '📋' }}</span>
       <span class="tt-body">
@@ -59,9 +58,8 @@
       <span class="ws-alabel muted">{{ hero.label }}</span>
     {% endif %}
   </div>
-</div>
 
-<div class="card chat-card" id="chat-box">
+<div class="chat-messages" id="chat-box">
   {% include "_chat_messages.html" %}
 </div>
 

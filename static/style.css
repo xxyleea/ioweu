@@ -689,3 +689,26 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
 .manage-credits{margin:0}
 .manage-spacer{flex:1}
 .manage-card h2{overflow:visible}
+
+/* ===== chat v3: messenger rail + single canvas ===== */
+.chat-workspace{align-items:stretch}
+.chat-threads{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:0;overflow-y:auto;height:100%}
+.chat-threads h3{padding:1rem 1.1rem .6rem;margin:0;border-bottom:1px solid var(--line);font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.ws-thread{height:64px;border-radius:0;border-bottom:1px solid var(--line);padding:0 1.1rem}
+.ws-thread:last-child{border-bottom:none}
+.ws-thread:hover{background:var(--bg)}
+.ws-thread.active{background:var(--yellow);color:var(--ink)}
+.ws-thread.active small{color:var(--muted)}
+.ws-thread .thread-unread{top:50%;transform:translateY(-50%)}
+
+/* one big white canvas containing context strip + messages + composer */
+.chat-main.card{padding:0;display:flex;flex-direction:column;overflow:hidden}
+.ws-context{flex-shrink:0;border-bottom:1px solid var(--line)}
+.ws-context summary{padding:.75rem 1.2rem}
+.ws-ctx-body{border-top:none;padding:.2rem 1.2rem 1rem}
+.ws-actionbar{background:none;box-shadow:none;border-radius:0;border-bottom:1px solid var(--line);padding:.65rem 1.2rem;flex-shrink:0}
+.ws-actionbar.needs{border-left:none;background:#fdf6e3}
+.chat-messages{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.7rem;padding:1.2rem}
+.chat-toolbar{padding:.5rem 1.2rem 0}
+.chat-toolbar:empty{display:none}
+.chat-input{border-top:1px solid var(--line);padding:.8rem 1.2rem;margin:0}
