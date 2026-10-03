@@ -48,33 +48,41 @@
 </div>
 {% else %}
 {% set level = current.water_level %}
-{% set water_y = (372 - 282 * level / 100)|round|int %}
+{% set water_y = (372 - 332 * level / 100)|round|int %}
 {% set rise_pct = stone_info.credits * 3 if stone_info else 0 %}
 {% set pre_level = [level - rise_pct, 18]|max %}
-{% set pre_y = (372 - 282 * pre_level / 100)|round|int %}
+{% set pre_y = (372 - 332 * pre_level / 100)|round|int %}
 
 <section class="comm-hero card">
   <div class="comm-jar-wrap" id="jar-wrap">
-    <svg class="comm-jar" viewBox="0 0 340 420" aria-label="Community water jar, {{ level }} percent full">
+    <svg class="comm-jar" viewBox="0 0 340 400" aria-label="Community water jar, {{ level }} percent full">
       <defs>
         <clipPath id="jarClip">
-          <path d="M104 44 C102 86 84 108 70 142 C54 180 50 216 50 258 C50 336 92 376 170 376 C248 376 290 336 290 258 C290 216 286 180 270 142 C256 108 238 86 236 44 Z"/>
+          <path d="M118 34 H222 C222 66 216 76 238 98 C262 122 272 168 272 226 C272 310 238 372 170 372 C102 372 68 310 68 226 C68 168 78 122 102 98 C124 76 118 66 118 34 Z"/>
         </clipPath>
       </defs>
+      <!-- soft shadow under the jar -->
+      <ellipse cx="170" cy="386" rx="96" ry="9" fill="rgba(35,39,43,.06)"/>
+      <!-- water: two drifting pastel waves -->
       <g clip-path="url(#jarClip)">
         <g class="jar-water-group" id="jarWater" style="transform: translateY({{ (water_y - pre_y) }}px); transition: none;">
-          <rect x="30" y="{{ pre_y }}" width="290" height="{{ 420 - pre_y }}" fill="#cfe7e8"/>
-          <ellipse class="jar-surface" cx="170" cy="{{ pre_y }}" rx="135" ry="9" fill="#dceff0"/>
+          <path class="wave wave-back" d="M-160 8 Q-135 -14 -110 2 T-60 2 T-10 2 T40 2 T90 2 T140 2 T190 2 T240 2 T290 2 T340 2 T390 2 T440 2 T490 2 V440 H-160 Z" fill="#d8e8f7"/>
+          <path class="wave wave-front" d="M-160 10 Q-135 -10 -110 4 T-60 4 T-10 4 T40 4 T90 4 T140 4 T190 4 T240 4 T290 4 T340 4 T390 4 T440 4 T490 4 V440 H-160 Z" fill="#c2d9f2"/>
         </g>
+        {% set palette = ["#b8b2aa", "#d9c1b8", "#c9b391", "#8e8e8a", "#a9bfce", "#cfc8bd"] %}
         {% set stone_count = [current.exchanges, 14]|min %}
         {% for i in range(stone_count) %}
-        <ellipse class="jar-stone" cx="{{ 78 + (i * 37) % 190 }}" cy="{{ 356 - (i * 13) % 42 }}" rx="{{ 11 + (i * 5) % 7 }}" ry="{{ 8 + (i * 3) % 5 }}" fill="{{ ['#b9aa94','#c4b6a2','#ac9d86'][i % 3] }}" opacity=".9"/>
+        <path class="jar-stone" fill="{{ palette[i % 6] }}" opacity=".95"
+              d="M{{ 92 + (i * 41) % 170 }} {{ 340 - (i * 15) % 44 }}
+                 q4 -9 14 -9 q11 0 14 8 q3 9 -5 13 q-9 5 -18 2 q-8 -3 -5 -14 Z"/>
         {% endfor %}
       </g>
-      <path class="jar-outline" d="M104 44 C102 86 84 108 70 142 C54 180 50 216 50 258 C50 336 92 376 170 376 C248 376 290 336 290 258 C290 216 286 180 270 142 C256 108 238 86 236 44" fill="rgba(255,255,255,.45)" stroke="#23272b" stroke-width="3.5" stroke-linecap="round"/>
-      <path class="jar-neck" d="M104 44 L236 44" stroke="#23272b" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- glass body: barely-there outline, rounded like the reference bottle -->
+      <path class="jar-glass" d="M118 34 H222 C222 66 216 76 238 98 C262 122 272 168 272 226 C272 310 238 372 170 372 C102 372 68 310 68 226 C68 168 78 122 102 98 C124 76 118 66 118 34 Z"
+            fill="rgba(255,255,255,.28)" stroke="rgba(35,39,43,.22)" stroke-width="3" stroke-linejoin="round"/>
+      <rect x="106" y="16" width="128" height="24" rx="12" fill="rgba(255,255,255,.5)" stroke="rgba(35,39,43,.22)" stroke-width="3"/>
       <!-- a quiet crow, watching the water rise -->
-      <g class="jar-crow" transform="translate(268 300)">
+      <g class="jar-crow" transform="translate(272 292)">
         <path d="M18 62 C6 58 0 46 4 34 C7 24 16 18 26 20 L44 24 L58 16 L52 30 C56 40 52 54 40 60 C33 64 25 64 18 62 Z" fill="#23272b"/>
         <circle cx="46" cy="24" r="2.2" fill="#faf6ee"/>
         <path d="M58 16 L70 20 L56 26 Z" fill="#23272b"/>
