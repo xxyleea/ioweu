@@ -1046,3 +1046,33 @@ input[readonly]{background:var(--bg);color:var(--muted);cursor:not-allowed}
 /* ---------- toolbar actions: crisper than default ghost ---------- */
 .chat-toolbar>.btn-ghost,.chat-toolbar form button{border-color:rgba(35,39,43,.45);color:var(--ink);font-weight:700}
 .chat-toolbar>.btn-ghost:hover{border-color:var(--ink)}
+
+/* ---------- rewards page ---------- */
+.rw-head-credits{display:flex;flex-direction:column;align-items:flex-end;gap:.15rem}
+.rw-head-credits b{font-size:2rem;font-weight:800}
+.rw-hero{display:flex;align-items:center;gap:1.4rem;padding:1.8rem 2rem;margin-bottom:1.4rem}
+.rw-hero-emoji{font-size:2.6rem}
+.rw-hero-num{display:block;font-size:2.8rem;font-weight:800;letter-spacing:-.03em;line-height:1.05}
+.rw-featured{display:flex;justify-content:space-between;align-items:center;gap:1.5rem;padding:1.8rem 2rem;margin-bottom:1rem}
+.rw-f-body{display:flex;flex-direction:column;gap:.25rem}
+.rw-f-title{font-size:1.35rem;font-weight:800}
+.rw-kicker{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.6}
+.rw-f-side{display:flex;flex-direction:column;align-items:flex-end;gap:.4rem;flex-shrink:0}
+.rw-cost{font-size:1.15rem;font-weight:800}
+.rw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:1.1rem}
+.rw-card{display:flex;flex-direction:column;gap:.3rem;cursor:pointer;transition:transform .12s ease}
+.rw-card:hover{transform:translateY(-2px)}
+.rw-emoji{font-size:1.9rem}
+.rw-card p{margin:.1rem 0;font-size:.85rem;flex:1}
+.rw-meta{display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+.rw-state{font-size:.75rem;font-weight:700}
+.rw-code{font-family:ui-monospace,Menlo,monospace;font-weight:700;background:var(--bg);border:1.5px dashed var(--line);border-radius:10px;padding:.3rem .7rem;letter-spacing:.06em}
+.rw-coupon{display:flex;flex-direction:column;align-items:center;gap:.5rem;background:var(--bg);border:2px dashed var(--line);border-radius:18px;padding:1.2rem;margin:1rem 0}
+.rw-reminder{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1.4rem 1.8rem;margin-top:1.6rem}
+.rw-pastel-peach{background:var(--peach)}
+.rw-pastel-pink{background:var(--pink)}
+.rw-pastel-blue{background:var(--blue)}
+.rw-pastel-green{background:var(--green)}
+.rw-pastel-yellow{background:var(--yellow)}
+.rw-pastel-purple{background:var(--purple)}
+.rw-claimed-card{text-align:center;display:flex;flex-direction:column;align-items:center;gap:.4rem}

@@ -673,8 +673,37 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_community_members_user ON community_members(user_id);
             CREATE INDEX IF NOT EXISTS idx_requests_community ON requests(community_id);
+            CREATE TABLE IF NOT EXISTS rewards(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT 'everyday',
+                credit_cost INTEGER NOT NULL,
+                partner TEXT NOT NULL DEFAULT '',
+                terms TEXT NOT NULL DEFAULT '',
+                expiry_date TEXT,
+                emoji TEXT NOT NULL DEFAULT '✨',
+                pastel TEXT NOT NULL DEFAULT 'yellow',
+                max_per_user INTEGER NOT NULL DEFAULT 1,
+                active INTEGER NOT NULL DEFAULT 1,
+                featured INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS reward_redemptions(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                reward_id INTEGER NOT NULL,
+                credits_spent INTEGER NOT NULL,
+                code TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'available',
+                redeemed_at TEXT,
+                expires_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_redemptions_user ON reward_redemptions(user_id);
             """
         )
+        if not connection.execute("SELECT 1 FROM rewards LIMIT 1").fetchone():
+            seed_rewards(connection)
         notif_columns = {row["name"] for row in connection.execute("PRAGMA table_info(notifications)")}
         if "kind" not in notif_columns:
             connection.execute("ALTER TABLE notifications ADD COLUMN kind TEXT NOT NULL DEFAULT 'info'")
@@ -1460,6 +1489,35 @@ def add_community_stone(connection: sqlite3.Connection, item, contributor_id: in
     return {"level": level, "credits": agreed, "rise": rise, "reward": reward}
 
 
+REWARD_SEED = (
+    # title, description, category, cost, partner, terms, expiry, emoji, pastel, max, featured
+    ("Coffee treat", "Free regular drink — a little break after helping out.", "food", 20,
+     "Neighbourhood Café", "One regular hot drink per visit. Show the code at the counter.", "2026-12-31", "☕", "peach", 3, 1),
+    ("Pastry & coffee", "A warm pastry with your coffee, on a rainy day.", "food", 15,
+     "Corner Bakery", "Weekdays before 11am.", "2026-12-31", "🥐", "yellow", 3, 0),
+    ("Movie ticket", "One weekday matinee ticket.", "experiences", 40,
+     "Sunshine Cinema", "Monday–Thursday, non-holidays.", "2026-12-31", "🎬", "pink", 2, 0),
+    ("Book voucher", "$30 towards any second-hand book.", "learning", 30,
+     "Second Chapter Books", "In-store only.", "2026-12-31", "📚", "blue", 2, 0),
+    ("Gardening starter kit", "Seeds, soil and a small pot for your window.", "community", 25,
+     "Sai Wan Community Garden", "Pick up on Saturday mornings.", "2026-12-31", "🌱", "green", 1, 0),
+    ("IoU tote bag", "A sturdy tote for market runs.", "everyday", 35,
+     "IoU Studio", "One per neighbour.", "2026-12-31", "🛍", "purple", 1, 0),
+    ("Little surprise", "A small, neighbour-made thank-you.", "surprises", 10,
+     "IoU Community", "Mystery item — collected from a community box.", "2026-12-31", "✨", "yellow", 5, 0),
+)
+
+
+def seed_rewards(connection: sqlite3.Connection) -> None:
+    for row in REWARD_SEED:
+        connection.execute(
+            """INSERT INTO rewards(title,description,category,credit_cost,partner,terms,
+                   expiry_date,emoji,pastel,max_per_user,featured,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (*row, now()),
+        )
+
+
 def release_due_payments(connection: sqlite3.Connection) -> None:
     due = connection.execute(
         """SELECT * FROM requests
@@ -2239,6 +2297,75 @@ def community_join(request: Request, code: str = Form(...)):
         if already:
             return RedirectResponse(f"/community?cid={comm['id']}", status_code=303)
     return RedirectResponse(f"/community?cid={comm['id']}&joined=1", status_code=303)
+
+
+REWARDS_CATEGORIES = (
+    ("all", "All"), ("food", "☕ Food & Drinks"), ("experiences", "🎬 Experiences"),
+    ("learning", "📚 Learning"), ("community", "🌱 Community"),
+    ("everyday", "🛍 Everyday"), ("surprises", "✨ Little surprises"),
+)
+
+
+@app.get("/rewards", response_class=HTMLResponse)
+def rewards_page(request: Request, claimed: int | None = Query(None), error: str = ""):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        rewards = connection.execute(
+            "SELECT * FROM rewards WHERE active=1 ORDER BY featured DESC, credit_cost ASC"
+        ).fetchall()
+        redemptions = connection.execute(
+            """SELECT rr.*, r.title, r.emoji, r.pastel, r.description, r.partner, r.expiry_date
+               FROM reward_redemptions rr JOIN rewards r ON r.id=rr.reward_id
+               WHERE rr.user_id=? ORDER BY rr.redeemed_at DESC""",
+            (user["id"],),
+        ).fetchall()
+        counts = {row["reward_id"]: row["c"] for row in connection.execute(
+            """SELECT reward_id, COUNT(*) c FROM reward_redemptions
+               WHERE user_id=? AND status != 'expired' GROUP BY reward_id""",
+            (user["id"],),
+        ).fetchall()}
+        claimed_row = None
+        if claimed:
+            claimed_row = next((r for r in redemptions if r["id"] == claimed), None)
+    today = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    return render(request, "rewards.html", page="rewards",
+                  rewards=rewards, redemptions=redemptions, counts=counts,
+                  categories=REWARDS_CATEGORIES, claimed=claimed_row,
+                  today=today, redeem_error=error or None)
+
+
+@app.post("/rewards/{reward_id}/redeem")
+def reward_redeem(request: Request, reward_id: int):
+    user = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    with db() as connection:
+        reward = connection.execute("SELECT * FROM rewards WHERE id=?", (reward_id,)).fetchone()
+        today = datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+        if (not reward or not reward["active"]
+                or (reward["expiry_date"] and reward["expiry_date"] < today)):
+            return RedirectResponse("/rewards?error=unavailable", status_code=303)
+        used = connection.execute(
+            "SELECT COUNT(*) c FROM reward_redemptions WHERE user_id=? AND reward_id=? AND status != 'expired'",
+            (user["id"], reward_id)).fetchone()["c"]
+        if used >= reward["max_per_user"]:
+            return RedirectResponse("/rewards?error=limit", status_code=303)
+        if user["balance"] < reward["credit_cost"]:
+            return RedirectResponse("/rewards?error=balance", status_code=303)
+        code = f"{reward['title'].split()[0].upper()[:6]}-{secrets.token_hex(3).upper()}"
+        cursor = connection.execute(
+            """INSERT INTO reward_redemptions(user_id,reward_id,credits_spent,code,status,redeemed_at,expires_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (user["id"], reward_id, reward["credit_cost"], code, "available",
+             now(), reward["expiry_date"]),
+        )
+        connection.execute("UPDATE users SET balance=balance-? WHERE id=?",
+                           (reward["credit_cost"], user["id"]))
+        ledger_entry(connection, user["id"], None, "reward_redemption",
+                     -reward["credit_cost"], f"Redeemed \"{reward['title']}\"")
+    return RedirectResponse(f"/rewards?claimed={cursor.lastrowid}", status_code=303)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
