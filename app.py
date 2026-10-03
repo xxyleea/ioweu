@@ -2861,6 +2861,10 @@ def chain_review(request: Request, proposal_id: int):
                            for m in circle_member_rows(connection, proposal_id))
         me = member_row(connection, proposal_id, user["id"])
         me_raw = member_row(connection, proposal_id, user["id"], include_removed=True)
+        if has_left and _rejoinable_left_member(connection, circle, me_raw):
+            # Selecting is joining (spec 13): surface the task cards so one click
+            # both rejoins the member and reserves the task.
+            me = me_raw
         tasks = circle_task_rows(connection, proposal_id)
         cycles = viable_cycles(connection, proposal_id)
         my_cycle = next((c for c in cycles if user["id"] in c), None)
@@ -2933,14 +2937,57 @@ def _circle_pending_or_error(connection, proposal_id, user_id):
     return circle, ""
 
 
+def _rejoin_circle(connection: sqlite3.Connection, proposal_id: int, me: sqlite3.Row) -> None:
+    """Spec 43: restore a member who left while the Circle is still forming."""
+    connection.execute(
+        """UPDATE chain_members SET response='accepted', responded_at=?,
+               status=CASE WHEN selected_request_id IS NULL THEN ? ELSE ? END,
+               removed_at=NULL, removal_reason=NULL
+           WHERE proposal_id=? AND user_id=?""",
+        (now(), MEMBER_PENDING, MEMBER_SELECTED, proposal_id, me["user_id"]))
+    # Their own task comes back under Circle control.
+    selected = connection.execute(
+        "SELECT selected_by_user_id FROM requests WHERE id=?",
+        (me["request_id"],)).fetchone()
+    reservation = (RESERVATION_CIRCLE
+                   if selected and selected["selected_by_user_id"] else RESERVATION_PUBLIC)
+    connection.execute(
+        """UPDATE requests SET reservation_status=? WHERE id=? AND status='open'
+             AND provider_id IS NULL AND reservation_status=?""",
+        (reservation, me["request_id"], RESERVATION_RELEASED))
+    invalidate_start_proposal(connection, proposal_id)
+
+
+def _rejoinable_left_member(connection: sqlite3.Connection, circle: sqlite3.Row,
+                            me_raw: sqlite3.Row | None) -> bool:
+    """A member who left voluntarily can rejoin while the Circle is still pending."""
+    return bool(
+        circle is not None and circle["status"] in ("pending", "start_confirming")
+        and me_raw is not None and me_raw["response"] == "declined"
+        and me_raw["removal_reason"] in (CIRCLE_LEFT_PENDING, "not_interested"))
+
+
 @app.post("/chains/{proposal_id}/select")
 def circle_select(request: Request, proposal_id: int, request_id: int = Form(...)):
-    """Spec 13/14: select one task and reserve it for this Circle."""
+    """Spec 13/14: select one task and reserve it for this Circle.
+
+    Selecting is joining (spec 13): a member who left while the Circle is still
+    forming is silently restored, so "I can help with this" always works.
+    """
     user = current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
     with db() as connection:
         expire_circles(connection)
+        circle = circle_row(connection, proposal_id)
+        me_raw = member_row(connection, proposal_id, user["id"], include_removed=True)
+        if _rejoinable_left_member(connection, circle, me_raw):
+            _rejoin_circle(connection, proposal_id, me_raw)
+            for member in circle_member_rows(connection, proposal_id):
+                if member["user_id"] != user["id"]:
+                    notify(connection, member["user_id"],
+                           f"{user['name']} rejoined this Circle.",
+                           f"/chains/{proposal_id}", kind="info")
         _, error = _circle_pending_or_error(connection, proposal_id, user["id"])
         if error:
             return redirect_toast(f"/chains/{proposal_id}", error)
@@ -3008,24 +3055,11 @@ def chain_respond(request: Request, proposal_id: int, response: str = Form(...))
             if len(circle_member_rows(connection, proposal_id)) < CIRCLE_MIN_MEMBERS:
                 dissolve_circle(connection, proposal_id,
                                 "This Circle no longer has enough neighbours to form a loop.")
-            return redirect_toast(f"/chains/{proposal_id}", "You left this Circle suggestion.")
-        connection.execute(
-            """UPDATE chain_members SET response='accepted', responded_at=?,
-                   status=CASE WHEN selected_request_id IS NULL THEN ? ELSE ? END,
-                   removed_at=NULL, removal_reason=NULL
-               WHERE proposal_id=? AND user_id=?""",
-            (now(), MEMBER_PENDING, MEMBER_SELECTED, proposal_id, user["id"]))
-        # Rejoining puts the member's own task back under Circle control.
-        selected = connection.execute(
-            "SELECT selected_by_user_id FROM requests WHERE id=?",
-            (me["request_id"],)).fetchone()
-        reservation = (RESERVATION_CIRCLE
-                       if selected and selected["selected_by_user_id"] else RESERVATION_PUBLIC)
-        connection.execute(
-            """UPDATE requests SET reservation_status=? WHERE id=? AND status='open'
-                 AND provider_id IS NULL AND reservation_status=?""",
-            (reservation, me["request_id"], RESERVATION_RELEASED))
-        invalidate_start_proposal(connection, proposal_id)
+            # Back home — the banner there reflects the new state.
+            return redirect_toast("/", "You left this Circle suggestion."
+                                  if had_joined else
+                                  "Noted — we won't suggest this Circle on your home page again.")
+        _rejoin_circle(connection, proposal_id, me)
         for member in circle_member_rows(connection, proposal_id):
             if member["user_id"] != user["id"]:
                 notify(connection, member["user_id"],

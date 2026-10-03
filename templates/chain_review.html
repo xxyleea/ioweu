@@ -193,14 +193,14 @@
   {% elif me_raw.removal_reason == 'withdrew_from_active_circle' %}
     <p class="muted">Your withdrawal was processed and the Circle moved into settlement.</p>
   {% elif me_raw.removal_reason == 'not_interested' %}
-    <p class="muted">You said you were not interested. You can still change your mind and rejoin while this Circle is forming.</p>
+    <p class="muted">You said you were not interested. Changed your mind? Pick a task below to rejoin while this Circle is forming.</p>
   {% else %}
-    <p class="muted">You left this Circle. Your task is back on the board and this Circle no longer counts you as a member.</p>
+    <p class="muted">You left this Circle and your task is back on the board. Pick a task below to rejoin — choosing “I can help with this” puts you straight back in.</p>
   {% endif %}
   {% if proposal.status == 'pending' %}
   <form method="post" action="/chains/{{ proposal.id }}/respond" style="margin-top:.6rem">
     <input type="hidden" name="response" value="accepted">
-    <button class="btn-primary btn-sm">Rejoin this Circle</button>
+    <button class="btn-ghost btn-sm">Rejoin without picking a task yet</button>
   </form>
   {% endif %}
 </section>
