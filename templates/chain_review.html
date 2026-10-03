@@ -192,6 +192,8 @@
     <p class="muted">Your task passed its deadline, so it left this Circle. Post it again to be matched into a new one.</p>
   {% elif me_raw.removal_reason == 'withdrew_from_active_circle' %}
     <p class="muted">Your withdrawal was processed and the Circle moved into settlement.</p>
+  {% elif me_raw.removal_reason == 'not_interested' %}
+    <p class="muted">You said you were not interested. You can still change your mind and rejoin while this Circle is forming.</p>
   {% else %}
     <p class="muted">You left this Circle. Your task is back on the board and this Circle no longer counts you as a member.</p>
   {% endif %}
