@@ -15,7 +15,7 @@
 }
 *{box-sizing:border-box}
 [hidden]{display:none !important}
-body{margin:0;font-family:Sora,Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+body{margin:0;font-family:Sora,Inter,system-ui,sans-serif;color:var(--ink);background:var(--bg);overflow-x:hidden}
 h1{font-size:2.1rem;font-weight:800;margin:.2rem 0;letter-spacing:-.02em}
 h2{font-size:1.15rem;margin:.2rem 0 .6rem;font-weight:700}
 h3{font-size:1rem;margin:.3rem 0}
@@ -298,18 +298,18 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
   .two-col{grid-template-columns:1fr}
 }
 @media(max-width:700px){
-  .app-body{flex-direction:column}
-  .sidebar{width:100%;height:auto;position:sticky;top:0;z-index:50;flex-direction:column;gap:.4rem;padding:.5rem 0;border-right:0;border-bottom:1px solid var(--line);background:var(--bg)}
+  .app-body{flex-direction:column;max-width:100%;overflow-x:hidden}
+  .sidebar{width:100%;max-width:100%;min-width:0;height:auto;position:sticky;top:0;z-index:50;flex-direction:column;gap:.4rem;padding:.5rem 0;border-right:0;border-bottom:1px solid var(--line);background:var(--bg)}
   .brand-row{display:flex;align-items:center;justify-content:space-between;padding:0 1rem}
   .brand-tag{display:none}
   .side-user{display:none}
   .side-logout{display:none}
-  .nav-links{flex-direction:row;flex:0 0 auto;overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:0 .6rem;gap:.2rem}
+  .nav-links{flex-direction:row;flex:0 0 auto;max-width:100%;min-width:0;overflow-x:auto;overflow-y:hidden;white-space:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:0 .6rem;gap:.2rem}
   .nav-links::-webkit-scrollbar{display:none}
   .nav-link{flex:0 0 auto;padding:.55rem .95rem;font-size:.85rem;border-radius:999px}
   .nav-link .nav-ico{display:inline}
   .nav-footer{display:none}
-  .content{padding:1.2rem 1rem 3rem}
+  .content{padding:1.2rem 1rem 3rem;max-width:100%;min-width:0}
   .bento{grid-template-columns:1fr 1fr}
   .page-head{flex-direction:column;align-items:stretch}
   .page-head .btn-primary,.page-head .btn-ghost{align-self:flex-start}
