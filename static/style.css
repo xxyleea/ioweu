@@ -309,7 +309,22 @@ summary{cursor:pointer;font-weight:700;color:var(--muted)}
   .nav-link{flex:0 0 auto;padding:.55rem .95rem;font-size:.85rem;border-radius:999px}
   .nav-link .nav-ico{display:inline}
   .nav-footer{display:none}
-  .content{padding:1.2rem 1rem 3rem;max-width:100%;min-width:0}
+  .content{padding:1.2rem 1rem 3rem;max-width:100%;min-width:0;overflow-x:hidden}
+  main{max-width:100vw;overflow-x:hidden}
+  .circle-banner{flex-wrap:wrap}
+  .circle-banner .btn-primary{margin-left:0;width:100%;white-space:normal;text-align:center}
+  .cf{gap:.2rem}
+  .cf-arrow{width:32px;height:32px;flex:0 0 32px}
+  .cf-card{width:calc(100vw - 6rem);max-width:250px}
+  .hub-block{padding:1.1rem}
+  .credit-chip{margin-left:0;margin-top:.3rem}
+  .action-row{flex-wrap:wrap}
+  .action-row .ar-main{min-width:0;flex:1}
+  .action-row .ar-cta{white-space:normal}
+  .exchange-row{flex-wrap:wrap}
+  .exchange-row b{flex:1 1 100%}
+  .section-title{font-size:1.15rem}
+  .home-section{overflow:hidden}
   .bento{grid-template-columns:1fr 1fr}
   .page-head{flex-direction:column;align-items:stretch}
   .page-head .btn-primary,.page-head .btn-ghost{align-self:flex-start}
