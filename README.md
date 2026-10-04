@@ -1,6 +1,6 @@
 # IoU prototype
 
-IoU is a Python-first neighbourhood mutual-credit demo. It uses FastAPI, server-rendered Jinja2 templates, SQLite, and a small amount of vanilla CSS/HTML.
+IoU is a Python-first neighbourhood mutual-credit demo. It uses FastAPI, server-rendered Jinja2 templates, SQLite, and a small amount of vanilla CSS/HTML. Built for HacKU 2026 (This is AI Slop)
 
 ## Run locally
 
