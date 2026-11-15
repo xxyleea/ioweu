@@ -1,8 +1,32 @@
-# IoU prototype
+# IoU
 
-IoU is a Python-first neighbourhood mutual-credit demo. It uses FastAPI, server-rendered Jinja2 templates, SQLite, and a small amount of vanilla CSS/HTML. Built for HacKU 2026.
+A neighbourhood mutual-credit web app: residents ask each other for help and pay in community credits, with protected
+payments, a dispute process and reliability scores. Built for HacKU 2026 with FastAPI, server-rendered Jinja2 templates,
+SQLite and plain CSS/HTML.
+
+<!-- TODO: add docs/screenshot.png (for example the home dashboard or a task chat). -->
+![IoU home dashboard](docs/screenshot.png)
+
+## How it works
+
+- **Credits.** New members get `+10` credits. You can post a request only while your balance is positive, and a balance
+  can never fall below `-5`. Credits are community units, not money.
+- **Protected payments.** When an agreed task starts, its credits move from the requester's available balance into a
+  held balance. The provider uploads proof and marks the task complete, the requester confirms, and the credits stay
+  held for three more days before they are released automatically.
+- **Dispute window.** While credits are held, the requester can report a problem (the window is 3 days by default and
+  a moderator can change it per task). A dispute goes through three stages: the two people negotiate in chat (3 days),
+  then IoU proposes a rule-based Fair Resolution (1 day), then a moderator decides if either side rejects it.
+- **Reliability score.** Separate from credits. Everyone starts at 60/100. Completed tasks and thumbs-ups raise it;
+  late cancellations, no-shows and false evidence lower it. Below 30 an account is restricted to tasks worth at most
+  5 credits, and at 0 it is suspended.
+
+The recommendation engine, proof screening and Fair Resolution are all deterministic and run locally, so the demo
+needs no external AI key.
 
 ## Run locally
+
+Windows (PowerShell):
 
 ```powershell
 py -m venv .venv
@@ -11,11 +35,23 @@ pip install -r requirements.txt
 uvicorn app:app --reload
 ```
 
-Open <http://127.0.0.1:8000>. The seeded demo accounts all use `demo123`:
+macOS / Linux:
 
-- `alex@example.com`
-- `sam@example.com`
-- `moderator@example.com`
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app:app --reload
+```
+
+Open <http://127.0.0.1:8000>. On first start the app creates `ioweu.db` with three **demo-only** accounts, all with the
+password `demo123`:
+
+- `alex@example.com` (resident)
+- `sam@example.com` (resident)
+- `moderator@example.com` (moderator)
+
+These are demo credentials for a local database. Do not reuse them on a deployed instance.
 
 The prototype includes the request board, a dedicated skill-matched recommendations page, opt-in value-based task-chain invitations, requester-side offers with buffers, provider matching, two-sided value and buffer negotiation, overlapping-range agreement, visible recommendation guardrails with explanations and explicit confirmation for out-of-range offers, provider leave/reopen, side-to-move deadlines, pre-acceptance messaging, required provider proof upload, deterministic proof file screening with audit metadata, requester completion confirmation, a three-day protected-payment hold, automatic background release processing and deadline reminders, configurable problem-reporting eligibility and windows, multi-file supporting evidence, refund/redo/alternative-compensation resolution requests, user-to-user refund negotiation, deterministic fair-solution suggestions with accept/reject controls, moderator policy configuration and no/partial/full/frozen decisions, automatic balance adjustments, and richer payment/thank-you/refund history. The recommendation engine infers effort and complexity from the written task details on the backend, then compares them with recent history. It is deterministic and local so a live demo does not require an external AI key.
 
@@ -99,7 +135,12 @@ requests, four Circle states, disputes, and chat threads):
 
 The seeder is idempotent and prices every task with the app's own recommendation
 engine, so the deterministic checker always agrees with the board. It wipes and
-rebuilds `ioweu.db`, which is intentionally not committed to git. The recommendation
+rebuilds `ioweu.db`, which is intentionally not committed to git.
+
+The seeded residents are fictional. Seeding **replaces** the three accounts above;
+log in instead with any seeded resident (password `demo123`, demo-only), for example
+`priya.nair@example.com` (resident), `carmen.sze@example.com` (resident) or
+`vivian.lau@example.com` (moderator). The recommendation
 endpoint uses the recent 90-day category median as its historical benchmark, then
 adjusts it for effort, complexity, and quality:
 

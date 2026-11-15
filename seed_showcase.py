@@ -35,20 +35,20 @@ def price(minutes: int, complexity: int = 3, quality: int = 3) -> int:
 
 USERS = [
     # name, email, district, address, age, skills, reliability, balance, moderator
-    ("Vivian Lau", "vivian.lau.hk@gmail.com", "Kennedy Town", "12 Smithfield Road", 41, "Mediation,Community Organising", 88, 46, 1),
-    ("Marcus Cheng", "marcus.cheng88@gmail.com", "Kennedy Town", "27 Bellevue Avenue", 34, "Coding,Web Development", 74, 31, 0),
-    ("Aisha Rahman", "aisha.rahman.hk@gmail.com", "Kennedy Town", "5 Davis Street", 29, "Cooking,Grocery Shopping", 81, 27, 0),
-    ("Ken Wong", "kenwong.cw@gmail.com", "Kennedy Town", "18 Cadogan Street", 24, "Dog Walking,Plant Care", 55, 9, 0),
-    ("Priya Nair", "priya.nair.home@gmail.com", "Sai Ying Pun", "45 Queen's Road West", 37, "Tutoring,Math", 90, 52, 0),
-    ("Tomas Ferreira", "tomas.ferreira.pt@gmail.com", "Sai Ying Pun", "8 High Street", 31, "Photography,Illustration", 68, 18, 0),
-    ("Grace Ng", "grace.ng.syp@gmail.com", "Sai Ying Pun", "132 Des Voeux Road West", 52, "Sewing,Alterations", 77, 24, 0),
-    ("Daniel Cho", "daniel.cho.mail@gmail.com", "Sai Ying Pun", "3 Centre Street", 26, "Furniture Assembly,Basic Repairs", 62, 12, 0),
-    ("Mei Fong", "mei.fong.home@gmail.com", "Sheung Wan", "61 Bonham Strand", 47, "Baking,Event Planning", 84, 38, 0),
-    ("Oliver Bennett", "oliver.bennett.uk@gmail.com", "Sheung Wan", "9 Tai Ping Shan Street", 33, "Bicycle Repair,DIY", 71, 22, 0),
-    ("Hana Ito", "hana.ito.jp@gmail.com", "Sheung Wan", "28 Upper Station Street", 38, "Piano,Japanese Tutoring", 79, 19, 0),
-    ("Raj Patel", "raj.patel.work@gmail.com", "North Point", "66 King's Road", 44, "Driving,Delivery,Furniture Moving", 65, 14, 0),
-    ("Carmen Sze", "carmen.sze.np@gmail.com", "North Point", "11 Chun Yeung Street", 55, "Elderly Companionship,Cantonese", 86, 33, 0),
-    ("Leo Ma", "leo.ma.np@gmail.com", "North Point", "23 Tin Chiu Street", 22, "Phone Troubleshooting,Social Media", 58, 7, 0),
+    ("Vivian Lau", "vivian.lau@example.com", "Kennedy Town", "Flat 1A, Example Court (fictional)", 41, "Mediation,Community Organising", 88, 46, 1),
+    ("Marcus Cheng", "marcus.cheng@example.com", "Kennedy Town", "Flat 2A, Example Court (fictional)", 34, "Coding,Web Development", 74, 31, 0),
+    ("Aisha Rahman", "aisha.rahman@example.com", "Kennedy Town", "Flat 3A, Example Court (fictional)", 29, "Cooking,Grocery Shopping", 81, 27, 0),
+    ("Ken Wong", "ken.wong@example.com", "Kennedy Town", "Flat 4A, Example Court (fictional)", 24, "Dog Walking,Plant Care", 55, 9, 0),
+    ("Priya Nair", "priya.nair@example.com", "Sai Ying Pun", "Flat 5A, Example Court (fictional)", 37, "Tutoring,Math", 90, 52, 0),
+    ("Tomas Ferreira", "tomas.ferreira@example.com", "Sai Ying Pun", "Flat 6A, Example Court (fictional)", 31, "Photography,Illustration", 68, 18, 0),
+    ("Grace Ng", "grace.ng@example.com", "Sai Ying Pun", "Flat 7A, Example Court (fictional)", 52, "Sewing,Alterations", 77, 24, 0),
+    ("Daniel Cho", "daniel.cho@example.com", "Sai Ying Pun", "Flat 8A, Example Court (fictional)", 26, "Furniture Assembly,Basic Repairs", 62, 12, 0),
+    ("Mei Fong", "mei.fong@example.com", "Sheung Wan", "Flat 9A, Example Court (fictional)", 47, "Baking,Event Planning", 84, 38, 0),
+    ("Oliver Bennett", "oliver.bennett@example.com", "Sheung Wan", "Flat 10A, Example Court (fictional)", 33, "Bicycle Repair,DIY", 71, 22, 0),
+    ("Hana Ito", "hana.ito@example.com", "Sheung Wan", "Flat 11A, Example Court (fictional)", 38, "Piano,Japanese Tutoring", 79, 19, 0),
+    ("Raj Patel", "raj.patel@example.com", "North Point", "Flat 12A, Example Court (fictional)", 44, "Driving,Delivery,Furniture Moving", 65, 14, 0),
+    ("Carmen Sze", "carmen.sze@example.com", "North Point", "Flat 13A, Example Court (fictional)", 55, "Elderly Companionship,Cantonese", 86, 33, 0),
+    ("Leo Ma", "leo.ma@example.com", "North Point", "Flat 14A, Example Court (fictional)", 22, "Phone Troubleshooting,Social Media", 58, 7, 0),
 ]
 
 HISTORY = [
@@ -110,10 +110,10 @@ CIRCLE_TASKS = {
 
 EXTRA_TASKS = [
     # owner_email, title, description, category, days, urgency, minutes, complexity
-    ("vivian.lau.hk@gmail.com", "Move six theatre costume boxes", "From a storage room in Sai Wan to a car at the kerb; two trips down the stairs.", "daily life", 5, "urgent", 75, 4),
-    ("daniel.cho.mail@gmail.com", "Assemble a study desk before Sunday", "120cm desk, all tools needed; happy to help carry it up too.", "repair & diy", 3, "soon", 75, 4),
-    ("hana.ito.jp@gmail.com", "Piano practice audience wanted", "Play for my students' informal recital, clapping required.", "creative", 8, "flexible", 60, 3),
-    ("leo.ma.np@gmail.com", "Set up grandma's new phone", "Contacts, WhatsApp, and teaching her the camera, patiently.", "technology", 6, "soon", 60, 3),
+    ("vivian.lau@example.com", "Move six theatre costume boxes", "From a storage room in Sai Wan to a car at the kerb; two trips down the stairs.", "daily life", 5, "urgent", 75, 4),
+    ("daniel.cho@example.com", "Assemble a study desk before Sunday", "120cm desk, all tools needed; happy to help carry it up too.", "repair & diy", 3, "soon", 75, 4),
+    ("hana.ito@example.com", "Piano practice audience wanted", "Play for my students' informal recital, clapping required.", "creative", 8, "flexible", 60, 3),
+    ("leo.ma@example.com", "Set up grandma's new phone", "Contacts, WhatsApp, and teaching her the camera, patiently.", "technology", 6, "soon", 60, 3),
 ]
 
 # Chats on completed jobs: HISTORY index -> [(speaker 'h'|'r', text), ...].
@@ -159,20 +159,20 @@ CHATS = {
 # Circle group chat (chain_messages): district -> [(member email, hours_ago, text)]
 GROUP_CHAT = {
     "Kennedy Town": [
-        ("aisha.rahman.hk@gmail.com", 30, "Morning all! Nice to see our four needs line up so neatly."),
-        ("marcus.cheng88@gmail.com", 26, "Vivian, don't worry about Biscuit — he's gentle once he knows you."),
-        ("vivian.lau.hk@gmail.com", 24, "I used to have a beagle. He'll love Smithfield at sunset."),
-        ("kenwong.cw@gmail.com", 6, "Still deciding between the market pickup and the library run — will pick tonight!"),
+        ("aisha.rahman@example.com", 30, "Morning all! Nice to see our four needs line up so neatly."),
+        ("marcus.cheng@example.com", 26, "Vivian, don't worry about Biscuit — he's gentle once he knows you."),
+        ("vivian.lau@example.com", 24, "I used to have a beagle. He'll love Smithfield at sunset."),
+        ("ken.wong@example.com", 6, "Still deciding between the market pickup and the library run — will pick tonight!"),
     ],
     "Sheung Wan": [
-        ("mei.fong.home@gmail.com", 28, "All set for this week — I'll grab the dry cleaning after my market run."),
-        ("oliver.bennett.uk@gmail.com", 22, "The cake tin is on my kitchen bench, Hana. If I'm out, it's in the hallway."),
-        ("hana.ito.jp@gmail.com", 8, "Perfect. Mochi and I will be at the park by 8 — see you all at handover!"),
+        ("mei.fong@example.com", 28, "All set for this week — I'll grab the dry cleaning after my market run."),
+        ("oliver.bennett@example.com", 22, "The cake tin is on my kitchen bench, Hana. If I'm out, it's in the hallway."),
+        ("hana.ito@example.com", 8, "Perfect. Mochi and I will be at the park by 8 — see you all at handover!"),
     ],
     "North Point": [
-        ("carmen.sze.np@gmail.com", 30, "My half is sorted — Tuesday prescription pickup is booked with the clinic."),
-        ("raj.patel.work@gmail.com", 25, "I can cover the dvd run if Leo is still stuck in Singapore."),
-        ("leo.ma.np@gmail.com", 4, "Thanks both — Singapore got extended another week. I've filed the withdrawal request, sorry again."),
+        ("carmen.sze@example.com", 30, "My half is sorted — Tuesday prescription pickup is booked with the clinic."),
+        ("raj.patel@example.com", 25, "I can cover the dvd run if Leo is still stuck in Singapore."),
+        ("leo.ma@example.com", 4, "Thanks both — Singapore got extended another week. I've filed the withdrawal request, sorry again."),
     ],
 }
 
@@ -288,19 +288,19 @@ def main() -> None:
                VALUES ('Hang three picture frames',
                        'Frames hung in the living room; one bracket arrived cracked.',
                        'repair & diy',?,?, 'disputed',6,6,6,45,3,3,?,?)""",
-            (mail_to_id["grace.ng.syp@gmail.com"], mail_to_id["daniel.cho.mail@gmail.com"],
+            (mail_to_id["grace.ng@example.com"], mail_to_id["daniel.cho@example.com"],
              now_iso(-9), now_iso(-6))).lastrowid
         conn.execute(
             """INSERT INTO transactions(request_id,requester_id,provider_id,value,
                    effort_minutes,complexity,quality_score,created_at)
                VALUES (?,?,?,?,?,?,?,?)""",
-            (disp_req, mail_to_id["grace.ng.syp@gmail.com"],
-             mail_to_id["daniel.cho.mail@gmail.com"], 6, 45, 3, 3, now_iso(-6)))
+            (disp_req, mail_to_id["grace.ng@example.com"],
+             mail_to_id["daniel.cho@example.com"], 6, 45, 3, 3, now_iso(-6)))
         conn.execute(
             """INSERT INTO disputes(request_id,opened_by,description,status,
                    requested_refund_amount,negotiation_status,review_since)
                VALUES (?,?,?,'open',3,'open',?)""",
-            (disp_req, mail_to_id["grace.ng.syp@gmail.com"],
+            (disp_req, mail_to_id["grace.ng@example.com"],
              "One of the three brackets was cracked and the frame leans to the left. "
              "Daniel offered to come back but cannot make it this week; I would like "
              "2-3 credits back to buy a replacement bracket.", now_iso(-5)))

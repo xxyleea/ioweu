@@ -7,6 +7,7 @@ env/
 
 # Environment and secrets
 .env
+.env.*
 *.secret
 
 # Local runtime data
@@ -25,5 +26,12 @@ m.txt
 # Runtime uploads & backups (never commit)
 uploads/
 backups/
-ioweu.db
+
+# Local databases (any SQLite file, plus WAL/SHM side files and manual backups)
+*.db
+*.db-wal
+*.db-shm
+*.db.bak*
+*.sqlite
+*.sqlite3
 .wbapp_*.genie
